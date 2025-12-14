@@ -9,7 +9,7 @@
 #include <stb_ds.h>
 #include <stb_image.h>
 #include <string.h>
-
+#include <stdbool.h>
 
 // TODO WT Sprite shader
 
@@ -40,11 +40,19 @@ struct sprite_vertex {
     vec2 tex;
 };
 
-void _glfw_error_fun(int error_code, const char* description) {
+bool vec2_inside_rect(const vec2 p, const vec4 rect) {
+    return p[0] > rect[0] &&
+           p[0] < (rect[0] + rect[2]) &&
+           p[1] > rect[1] &&
+           p[1] < (rect[1] + rect[3]);
+
+}
+
+void glfw_error_fun(int error_code, const char* description) {
     LOG(stderr, "GLFW ERROR %d: %s", error_code, description);
 }
 
-void _check_shader(GLuint shader) {
+void check_shader(GLuint shader) {
     int code;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &code);
     if (GL_TRUE != code) {
@@ -59,6 +67,59 @@ void _check_shader(GLuint shader) {
         }
     }
 }
+
+void engine_resize(struct engine* engine, int width, int height) {
+    mat4x4_ortho(engine->view, 0, (float)width, 0, (float)height, -1.0f, 1.0f);
+}
+
+void on_scroll(GLFWwindow* window, double xoff, double yoff) {
+    struct engine* engine = glfwGetWindowUserPointer(window);
+    event_notify(engine->scroll_callbacks, xoff, yoff);
+}
+void on_char(GLFWwindow* window, unsigned int c) {
+    struct engine* engine = glfwGetWindowUserPointer(window);
+    event_notify(engine->char_callbacks, c);
+}
+void on_key(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    struct engine* engine = glfwGetWindowUserPointer(window);
+    event_notify(engine->key_callbacks, key, scancode, action, mods);
+}
+
+void on_mouse_button(GLFWwindow* window, int button, int action, int mods) {
+    struct engine* engine = glfwGetWindowUserPointer(window);
+    event_notify(engine->mouse_button_callbacks, button, action, mods);
+
+    if (action != 1) return;
+
+    // Iterate through all sprites to see what overlaps the mouse position.
+    for (size_t i = 0; i < arrlen(engine->sprites); i++) {
+        struct sprite* sprite = &engine->sprites[i];
+        const float* bounds = shget(engine->textures, engine->sprites[i].texture_name).rect;
+        if (vec2_inside_rect(engine->cursor_pos, (vec4){
+            sprite->pos[0],
+            sprite->pos[1],
+            sprite->pos[0] + bounds[2],
+            sprite->pos[1] + bounds[3],
+        })) {
+            printf("You Clicked on sprite %lld, %s\n", i, sprite->texture_name);
+        }
+    }
+}
+
+
+void on_framebuffer_size(GLFWwindow* window, int width, int height) {
+    struct engine* engine = glfwGetWindowUserPointer(window);
+    engine_resize(engine, width, height);
+}
+
+void on_cursor_pos(GLFWwindow* window, double x_pos, double y_pos) {
+    struct engine*engine = glfwGetWindowUserPointer(window);
+    int ww, wh;
+    glfwGetWindowSize(window, &ww, &wh);
+    engine->cursor_pos[0] = (float)x_pos;
+    engine->cursor_pos[1] = (float)wh - (float)y_pos;
+}
+
 
 struct engine *engine_init(struct engine_config engine_config) {
     stbi_set_flip_vertically_on_load(1);
@@ -76,7 +137,7 @@ struct engine *engine_init(struct engine_config engine_config) {
     glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GL_TRUE);
 #endif
 
-    glfwSetErrorCallback(_glfw_error_fun);
+    glfwSetErrorCallback(glfw_error_fun);
 
     int window_width = 1280, window_height = 720;
 
@@ -103,25 +164,23 @@ struct engine *engine_init(struct engine_config engine_config) {
 
     engine->textures = NULL;
     sh_new_arena(engine->textures);
+    engine->base_textures = NULL;
+    sh_new_arena(engine->base_textures);
 
     engine_resize(engine, window_width, window_height);
 
     // Sprite Batch program
     engine->sprite_batch_program = glCreateProgram();
-    GLuint v_shader, f_shader;
 
-
-    v_shader = glCreateShader(GL_VERTEX_SHADER);
+    GLuint v_shader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(v_shader, 1, &vert_shader_src, NULL);
     glCompileShader(v_shader);
-    _check_shader(v_shader);
+    check_shader(v_shader);
 
-    f_shader = glCreateShader(GL_FRAGMENT_SHADER);
-    // Replace the "// INJECT_TEXTURES" string with all the samplers we need
-
+    GLuint f_shader = glCreateShader(GL_FRAGMENT_SHADER);
     glShaderSource(f_shader, 1, &frag_shader_src, NULL);
     glCompileShader(f_shader);
-    _check_shader(f_shader);
+    check_shader(f_shader);
 
     glAttachShader(engine->sprite_batch_program, v_shader);
     glAttachShader(engine->sprite_batch_program, f_shader);
@@ -156,6 +215,27 @@ struct engine *engine_init(struct engine_config engine_config) {
     glVertexArrayAttribBinding(engine->sprite_vao, 1, 0);
 
     glVertexArrayVertexBuffer(engine->sprite_vao, 0, engine->sprite_batch_mesh, 0, sizeof(struct sprite_vertex));
+
+    glfwSetWindowUserPointer(engine->window, engine);
+
+    glfwSetScrollCallback(engine->window, &on_scroll);
+    glfwSetCharCallback(engine->window, &on_char);
+    glfwSetKeyCallback(engine->window, &on_key);
+    glfwSetMouseButtonCallback(engine->window, &on_mouse_button);
+
+    glfwSetFramebufferSizeCallback(engine->window, &on_framebuffer_size);
+    glfwSetCursorPosCallback(engine->window, &on_cursor_pos);
+
+    double cursor_x, cursor_y;
+    glfwGetCursorPos(engine->window, &cursor_x, &cursor_y);
+    engine->cursor_pos[0] = engine->last_cursor_pos[0] = (float)cursor_x;
+    engine->cursor_pos[1] = engine->last_cursor_pos[1] = (float)cursor_y;
+
+    event_init(engine->scroll_callbacks);
+    event_init(engine->char_callbacks);
+    event_init(engine->key_callbacks);
+    event_init(engine->mouse_button_callbacks);
+
     return engine;
 }
 
@@ -163,13 +243,18 @@ void engine_free(struct engine *engine) {
     arrfree(engine->sprites);
     arrfree(engine->free_sprites);
 
-    for (int i = 0; i < shlen(engine->textures); i++) {
+    for (int i = 0; i < shlen(engine->base_textures); i++) {
         assert(engine->base_textures);
         glDeleteTextures(1, &engine->base_textures[i].value);
     }
     shfree(engine->base_textures);
 
     shfree(engine->textures);
+
+    arrfree(engine->scroll_callbacks);
+    arrfree(engine->char_callbacks);
+    arrfree(engine->key_callbacks);
+    arrfree(engine->mouse_button_callbacks);
 
     glDeleteBuffers(1, &engine->sprite_batch_mesh);
 
@@ -179,48 +264,58 @@ void engine_free(struct engine *engine) {
     free(engine);
 }
 
-void engine_resize(struct engine *engine, int width, int height) {
-    mat4x4_ortho(engine->view, 0, (float)width, 0, (float)height, -1.0f, 1.0f);
-}
-
 // TODO WT: Support Texture Atlases
 void load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites) {
-    GLuint tex;
-    glCreateTextures(GL_TEXTURE_2D, 1, &tex);
-
+    size_t base_texture_index = 0;
     int x, y, bpp;
-    unsigned char *data = stbi_load(texture_path, &x, &y, &bpp, STBI_rgb_alpha);
-    if (NULL == data) {
-        LOG(stderr, "Failed to load image %s: %s", texture_path, stbi_failure_reason());
+    if (-1 == shgeti(engine->base_textures, texture_path)) {
+        GLuint tex;
+        glCreateTextures(GL_TEXTURE_2D, 1, &tex);
+
+        unsigned char *data = stbi_load(texture_path, &x, &y, &bpp, STBI_rgb_alpha);
+        if (NULL == data) {
+            LOG(stderr, "Failed to load image %s: %s", texture_path, stbi_failure_reason());
+        }
+
+        // Set up the texture params
+        glTextureParameteri(tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTextureParameteri(tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        glTextureStorage2D(tex, 1, GL_RGBA8, x, y);
+        glTextureSubImage2D(tex, 0, 0, 0, x, y, GL_RGBA, GL_UNSIGNED_BYTE, data);
+
+        stbi_image_free(data);
+
+        base_texture_index = shlen(engine->base_textures);
+        shput(engine->base_textures, texture_path, ((struct base_texture){
+            .texture=tex,
+            .size = {(float)x, (float)y}
+        }));
+    } else {
+        // Base texture already loaded, add additional sprites to it.
+        base_texture_index = shgeti(engine->base_textures, texture_path);
+        struct base_texture base_texture = engine->base_textures[base_texture_index].value;
+        x = (int)base_texture.size[0];
+        y = (int)base_texture.size[1];
     }
 
-    // Set up the texture params
-    glTextureParameteri(tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTextureParameteri(tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    glTextureStorage2D(tex, 1, GL_RGBA8, x, y);
-    glTextureSubImage2D(tex, 0, 0, 0, x, y, GL_RGBA, GL_UNSIGNED_BYTE, data);
-
-    stbi_image_free(data);
-
-    size_t texture_index = arrlen(engine->base_textures);
-    shputs(engine->base_textures, ((struct base_texture){
-        .key = (char*)texture_path,
-        .value=tex,
-        .size = {(float)x, (float)y}
-    }));
-
-    if (NULL == sprites) {
+    // If there's no sprites requested and we've not already loaded a sprite with that name, add a texture covering the whole base texture.
+    if (NULL == sprites && -1 == shgeti(engine->textures, texture_path)) {
         shput(engine->textures, texture_path, ((struct texture){
-            .texture_index = texture_index,
+            .texture_index = base_texture_index,
             .rect = {0, 0, (float)x, (float)y}
         }));
     } else {
+        // Add the sprites for the whole texture
         for (size_t i = 0; i < shlen(sprites); i++) {
+            // If we have a texture name clash, log it and we can overwrite.
+            if (-1 != shgeti(engine->textures, sprites[i].key)) {
+                LOG(stderr, "Already loaded sprite texture with the name %s", sprites[i].key);
+            }
             shput(engine->textures, sprites[i].key, ((struct texture){
-                .texture_index = texture_index,
+                .texture_index = base_texture_index,
                 .rect = {
                     sprites[i].value[0],
                     sprites[i].value[1],
@@ -255,6 +350,11 @@ void delete_sprite(struct engine *engine, sprite_handle handle) {
     arrpush(engine->free_sprites, handle);
 }
 
+void engine_update(struct engine* engine) {
+    vec2_sub(engine->cursor_delta, engine->last_cursor_pos, engine->last_cursor_pos);
+    memcpy(engine->last_cursor_pos, engine->cursor_pos, sizeof(vec2));
+}
+
 void _flush(struct engine* engine, struct sprite_vertex* vertices, GLuint texture) {
     glNamedBufferSubData(
         engine->sprite_batch_mesh,
@@ -281,7 +381,7 @@ void _flush(struct engine* engine, struct sprite_vertex* vertices, GLuint textur
     engine->engine_stats.draw_calls++;
 }
 
-void render(struct engine* engine) {
+void engine_render(struct engine* engine) {
     engine->engine_stats.draw_calls = 0;
 
     if (NULL == engine->sprites) {return;}
@@ -291,28 +391,42 @@ void render(struct engine* engine) {
 
     struct sprite_vertex* vertices = NULL;
 
-    struct base_texture* current_texture = NULL;
+    GLuint current_texture = 0;
 
-#define FLUSH_AND_CLEAR() {_flush(engine, vertices, current_texture->value); batch_size = 0;arrfree(vertices);}
+#define FLUSH_AND_CLEAR() {_flush(engine, vertices, current_texture); batch_size = 0;arrfree(vertices);}
 
     size_t batch_size = 0;
     for (size_t i = 0; i < numSprites; i++) {
         const struct sprite spr = engine->sprites[i];
-        struct texture* tex = &shget(engine->textures, spr.texture_name);
-        struct base_texture* base_texture = &engine->base_textures[tex->texture_index];
+        struct texture_storage* tex_storage = shgetp(engine->textures, spr.texture_name);
+        struct texture tex = shget(engine->textures, spr.texture_name);
+        char* base_texture_name = engine->base_textures[tex.texture_index].key;
+        struct base_texture base_tex = engine->base_textures[tex.texture_index].value;
 
-        if ((base_texture != current_texture) && batch_size > 0) {FLUSH_AND_CLEAR()}
+        if ((base_tex.texture != current_texture) && batch_size > 0) {FLUSH_AND_CLEAR()}
         // If the texture has changed we need to flush the batch. Encourage the use of Atlases, the renderer currently only support one texture at a time.
 
-        current_texture = base_texture;
+        current_texture = base_tex.texture;
 
-        float px = tex->rect[0], py = tex->rect[1], pw = tex->rect[2], ph = tex->rect[3], w = current_texture->size[0], h = current_texture->size[1];
+        float tex_x = tex.rect[0], tex_y = tex.rect[1], tex_w = tex.rect[2], tex_h = tex.rect[3], base_width = base_tex.size[0], base_height = base_tex.size[1];
 
         struct sprite_vertex corners[4] = {
-            (struct sprite_vertex){.pos = {spr.pos[0]     , spr.pos[1]     , 0.0f}, .tex = {px/w,      py/h}},
-            (struct sprite_vertex){.pos = {spr.pos[0]     , spr.pos[1] + ph, 0.0f}, .tex = {px/w,      (py+ph)/h}},
-            (struct sprite_vertex){.pos = {spr.pos[0] + pw, spr.pos[1] + ph, 0.0f}, .tex = {(px+pw)/w, (py+ph)/h}},
-            (struct sprite_vertex){.pos = {spr.pos[0] + pw, spr.pos[1]     , 0.0f}, .tex = {(px+pw)/w, py/h}},
+            (struct sprite_vertex){
+                .pos = {spr.pos[0], spr.pos[1], 0.0f},
+                .tex = {tex_x / base_width, tex_y / base_height}
+            },
+            (struct sprite_vertex){
+                .pos = {spr.pos[0], spr.pos[1] + tex_h, 0.0f},
+                .tex = {tex_x / base_width, (tex_y + tex_h) / base_height}
+            },
+            (struct sprite_vertex){
+                .pos = {spr.pos[0] + tex_w, spr.pos[1] + tex_h, 0.0f},
+                .tex = {(tex_x + tex_w) / base_width, (tex_y + tex_h) / base_height}
+            },
+            (struct sprite_vertex){
+                .pos = {spr.pos[0] + tex_w, spr.pos[1], 0.0f},
+                .tex = {(tex_x + tex_w) / base_width, tex_y / base_height}
+            },
         };
 
         // Move all corners into view space
@@ -344,6 +458,6 @@ void render(struct engine* engine) {
     }
 
     if (batch_size > 0) {
-        _flush(engine, vertices, current_texture->value);
+        _flush(engine, vertices, current_texture);
     }
 }
