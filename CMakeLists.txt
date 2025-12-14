@@ -9,10 +9,17 @@ find_package(nuklear)
 find_package(glfw3)
 find_package(linmath.h)
 
-add_executable(CardGameEngine main.c
-        nuklear_glfw_gl4.h
-        nuklear_include.h
-        engine.h
+add_executable(CardGameEngine src/main.c
+    src/nuklear_glfw_gl4.h
+    src/nuklear_include.h
+    src/engine.h
+    src/engine.c
+    src/shl.c
+    src/shl.c
+        src/editor_ui.h
+        src/editor_ui.c
+        src/texturepacker.c
+        src/texturepacker.h
 )
 
 target_link_libraries(CardGameEngine glfw)

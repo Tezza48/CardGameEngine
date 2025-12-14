@@ -1,89 +1,39 @@
 //
-// Created by tezza on 08/12/2025.
+// Created by tezza on 10/12/2025.
 //
 
+#include "engine.h"
 
-#pragma once
-#include <stdlib.h>
-
-#include <gl/glew.h>
-#include <GLFW/glfw3.h>
-
+#include <assert.h>
+#include <malloc.h>
 #include <stb_ds.h>
 #include <stb_image.h>
-#include <linmath.h>
-#include <malloc.h>
+#include <string.h>
 
-#define LOG(stream, message, ...) fprintf(stream, "LOG (%s:%d)" message "\n", __FILE__, __LINE__, ##__VA_ARGS__);
-
-struct sprite {
-    /// Owned malloced
-    char *texture_name;
-    vec2 pos;
-    // TODO WT Children/Parent Hiararchy
-};
-
-struct texture {
-    GLuint tex;
-    int width;
-    int height;
-};
-
-#define MAX_SPRITES_IN_BATCH 10000
-
-struct engine {
-    GLFWwindow *window;
-
-    struct sprite *sprites;
-    size_t *free_sprites;
-
-    struct {
-        char *key;
-        struct texture value;
-    } *textures;
-
-    mat4x4 view;
-
-    GLuint sprite_batch_program;
-
-    GLuint sprite_vao;
-    GLuint sprite_batch_mesh;
-};
-
-struct engine *engine_init(const char *title, int width, int height);
-
-void engine_free(struct engine *engine);
-
-void load_texture(struct engine *engine, const char *texture_path);
-
-void render(struct engine *engine);
-
-#ifdef ENGINE_IMPLEMENTATION
 
 // TODO WT Sprite shader
 
 const char * vert_shader_src = ""
-"#version 460\n\n"
-"layout (location=0) in vec3 a_pos;\n"
-"layout (location=1) in vec2 a_tex;\n"
-"out vec2 v_tex_coord;\n"
-"void main()\n"
-"{\n"
-"    gl_Position = vec4(a_pos, 1.0);\n"
-"    v_tex_coord = a_tex;\n"
-"}";
+        "#version 460\n\n"
+        "layout (location=0) in vec3 a_pos;\n"
+        "layout (location=1) in vec2 a_tex;\n"
+        "out vec2 v_tex_coord;\n"
+        "void main()\n"
+        "{\n"
+        "    gl_Position = vec4(a_pos, 1.0);\n"
+        "    v_tex_coord = a_tex;\n"
+        "}";
 
 
 const char* frag_shader_src = ""
-"#version 460\n\n"
-"in vec2 v_tex_coord;\n"
-"out vec4 out_frag_color;\n"
-"layout(binding=0) uniform sampler2D u_tex;\n"
-"void main()\n"
-"{\n"
-"    out_frag_color = texture(u_tex, v_tex_coord.xy);//vec4(v_tex_coord, 0.0, 1.0);\n"
-"}";
-
+        "#version 460\n\n"
+        "in vec2 v_tex_coord;\n"
+        "out vec4 out_frag_color;\n"
+        "layout(binding=0) uniform sampler2D u_tex;\n"
+        "void main()\n"
+        "{\n"
+        "    out_frag_color = texture(u_tex, v_tex_coord.xy);\n"
+        "}";
 
 struct sprite_vertex {
     vec3 pos;
@@ -110,7 +60,7 @@ void _check_shader(GLuint shader) {
     }
 }
 
-struct engine *engine_init(const char *title, const int width, const int height) {
+struct engine *engine_init(struct engine_config engine_config) {
     stbi_set_flip_vertically_on_load(1);
 
     if (!glfwInit()) {
@@ -128,7 +78,9 @@ struct engine *engine_init(const char *title, const int width, const int height)
 
     glfwSetErrorCallback(_glfw_error_fun);
 
-    GLFWwindow *window = glfwCreateWindow(width, height, title, NULL, NULL);
+    int window_width = 1280, window_height = 720;
+
+    GLFWwindow *window = glfwCreateWindow(window_width, window_height, "Card Game Engine", NULL, NULL);
     if (!window) {
         LOG(stderr, "Failed to create GLFW3 window");
         return NULL;
@@ -152,7 +104,7 @@ struct engine *engine_init(const char *title, const int width, const int height)
     engine->textures = NULL;
     sh_new_arena(engine->textures);
 
-    mat4x4_ortho(engine->view, 0, (float) width, 0, (float) height, -1.0f, 1.0f);
+    engine_resize(engine, window_width, window_height);
 
     // Sprite Batch program
     engine->sprite_batch_program = glCreateProgram();
@@ -212,8 +164,11 @@ void engine_free(struct engine *engine) {
     arrfree(engine->free_sprites);
 
     for (int i = 0; i < shlen(engine->textures); i++) {
-        glDeleteTextures(1, &engine->textures[i].value.tex);
+        assert(engine->base_textures);
+        glDeleteTextures(1, &engine->base_textures[i].value);
     }
+    shfree(engine->base_textures);
+
     shfree(engine->textures);
 
     glDeleteBuffers(1, &engine->sprite_batch_mesh);
@@ -224,7 +179,12 @@ void engine_free(struct engine *engine) {
     free(engine);
 }
 
-void load_texture(struct engine *engine, const char *texture_path) {
+void engine_resize(struct engine *engine, int width, int height) {
+    mat4x4_ortho(engine->view, 0, (float)width, 0, (float)height, -1.0f, 1.0f);
+}
+
+// TODO WT: Support Texture Atlases
+void load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites) {
     GLuint tex;
     glCreateTextures(GL_TEXTURE_2D, 1, &tex);
 
@@ -245,10 +205,57 @@ void load_texture(struct engine *engine, const char *texture_path) {
 
     stbi_image_free(data);
 
-    shput(engine->textures, texture_path, ((struct texture){.tex = tex, .width = x, .height = y}));
+    size_t texture_index = arrlen(engine->base_textures);
+    shputs(engine->base_textures, ((struct base_texture){
+        .key = (char*)texture_path,
+        .value=tex,
+        .size = {(float)x, (float)y}
+    }));
+
+    if (NULL == sprites) {
+        shput(engine->textures, texture_path, ((struct texture){
+            .texture_index = texture_index,
+            .rect = {0, 0, (float)x, (float)y}
+        }));
+    } else {
+        for (size_t i = 0; i < shlen(sprites); i++) {
+            shput(engine->textures, sprites[i].key, ((struct texture){
+                .texture_index = texture_index,
+                .rect = {
+                    sprites[i].value[0],
+                    sprites[i].value[1],
+                    sprites[i].value[2],
+                    sprites[i].value[3]
+                }
+            }));
+        }
+    }
 }
 
-void _flush(struct engine* engine, struct sprite_vertex* vertices, struct texture *texture) {
+sprite_handle create_sprite(struct engine *engine, char *texture_name, vec2 pos) {
+    sprite_handle handle;
+    if (arrlen(engine->free_sprites) > 0) {
+        handle = arrpop(engine->free_sprites);
+    } else {
+        handle = arrlen(engine->sprites);
+        arrput(engine->sprites, ((struct sprite){0}));
+    }
+
+    struct sprite* sprite = &engine->sprites[handle];
+    sprite->texture_name = _strdup(texture_name);
+    memcpy(sprite->pos, pos, sizeof(vec2));
+    return handle;
+}
+
+void delete_sprite(struct engine *engine, sprite_handle handle) {
+    struct sprite* sprite = &engine->sprites[handle];
+    free(sprite->texture_name);
+    sprite->texture_name = NULL;
+    memset(sprite->pos, 0, sizeof(vec2));
+    arrpush(engine->free_sprites, handle);
+}
+
+void _flush(struct engine* engine, struct sprite_vertex* vertices, GLuint texture) {
     glNamedBufferSubData(
         engine->sprite_batch_mesh,
         0,
@@ -261,7 +268,7 @@ void _flush(struct engine* engine, struct sprite_vertex* vertices, struct textur
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_2D, texture->tex);
+    glBindTexture(GL_TEXTURE_2D, texture);
 
     glBindVertexArray(engine->sprite_vao);
 
@@ -270,9 +277,13 @@ void _flush(struct engine* engine, struct sprite_vertex* vertices, struct textur
     glUseProgram(0);
     glBindVertexArray(0);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    engine->engine_stats.draw_calls++;
 }
 
 void render(struct engine* engine) {
+    engine->engine_stats.draw_calls = 0;
+
     if (NULL == engine->sprites) {return;}
 
     size_t numSprites = arrlen(engine->sprites);
@@ -280,25 +291,28 @@ void render(struct engine* engine) {
 
     struct sprite_vertex* vertices = NULL;
 
-    struct texture* current_texture = NULL;
+    struct base_texture* current_texture = NULL;
 
-#define FLUSH_AND_CLEAR() {_flush(engine, vertices, current_texture); batch_size = 0;arrfree(vertices);}
+#define FLUSH_AND_CLEAR() {_flush(engine, vertices, current_texture->value); batch_size = 0;arrfree(vertices);}
 
     size_t batch_size = 0;
     for (size_t i = 0; i < numSprites; i++) {
         const struct sprite spr = engine->sprites[i];
         struct texture* tex = &shget(engine->textures, spr.texture_name);
+        struct base_texture* base_texture = &engine->base_textures[tex->texture_index];
 
-        if (tex != current_texture && batch_size > 0) {FLUSH_AND_CLEAR()}
+        if ((base_texture != current_texture) && batch_size > 0) {FLUSH_AND_CLEAR()}
         // If the texture has changed we need to flush the batch. Encourage the use of Atlases, the renderer currently only support one texture at a time.
 
-        current_texture = tex;
+        current_texture = base_texture;
+
+        float px = tex->rect[0], py = tex->rect[1], pw = tex->rect[2], ph = tex->rect[3], w = current_texture->size[0], h = current_texture->size[1];
 
         struct sprite_vertex corners[4] = {
-            (struct sprite_vertex){.pos = {spr.pos[0]                   , spr.pos[1]                    , 0.0f}, .tex = {0.0f, 0.0f}},
-            (struct sprite_vertex){.pos = {spr.pos[0]                   , spr.pos[1] + (float)tex->height, 0.0f}, .tex = {0.0f, 1.0f}},
-            (struct sprite_vertex){.pos = {spr.pos[0] + (float)tex->width, spr.pos[1] + (float)tex->height, 0.0f}, .tex = {1.0f, 1.0f}},
-            (struct sprite_vertex){.pos = {spr.pos[0] + (float)tex->width, spr.pos[1]                    , 0.0f}, .tex = {1.0f, 0.0f}},
+            (struct sprite_vertex){.pos = {spr.pos[0]     , spr.pos[1]     , 0.0f}, .tex = {px/w,      py/h}},
+            (struct sprite_vertex){.pos = {spr.pos[0]     , spr.pos[1] + ph, 0.0f}, .tex = {px/w,      (py+ph)/h}},
+            (struct sprite_vertex){.pos = {spr.pos[0] + pw, spr.pos[1] + ph, 0.0f}, .tex = {(px+pw)/w, (py+ph)/h}},
+            (struct sprite_vertex){.pos = {spr.pos[0] + pw, spr.pos[1]     , 0.0f}, .tex = {(px+pw)/w, py/h}},
         };
 
         // Move all corners into view space
@@ -330,8 +344,6 @@ void render(struct engine* engine) {
     }
 
     if (batch_size > 0) {
-        _flush(engine, vertices, current_texture);
+        _flush(engine, vertices, current_texture->value);
     }
 }
-
-#endif

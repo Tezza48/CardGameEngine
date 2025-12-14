@@ -1,0 +1,142 @@
+spritesheet.png
+size: 1960, 950
+format: RGBA8888
+filter: Linear, Linear
+repeat: none
+pma: false
+Cards/cardBack_blue1
+  bounds: 0, 0, 140, 190
+Cards/cardBack_blue2
+  bounds: 140, 0, 140, 190
+Cards/cardBack_blue3
+  bounds: 280, 0, 140, 190
+Cards/cardBack_blue4
+  bounds: 420, 0, 140, 190
+Cards/cardBack_blue5
+  bounds: 560, 0, 140, 190
+Cards/cardBack_green1
+  bounds: 700, 0, 140, 190
+Cards/cardBack_green2
+  bounds: 840, 0, 140, 190
+Cards/cardBack_green3
+  bounds: 980, 0, 140, 190
+Cards/cardBack_green4
+  bounds: 1120, 0, 140, 190
+Cards/cardBack_green5
+  bounds: 1260, 0, 140, 190
+Cards/cardBack_red1
+  bounds: 1400, 0, 140, 190
+Cards/cardBack_red2
+  bounds: 1540, 0, 140, 190
+Cards/cardBack_red3
+  bounds: 1680, 0, 140, 190
+Cards/cardBack_red4
+  bounds: 1820, 0, 140, 190
+Cards/cardBack_red5
+  bounds: 0, 190, 140, 190
+Cards/cardClubs2
+  bounds: 140, 190, 140, 190
+Cards/cardClubs3
+  bounds: 280, 190, 140, 190
+Cards/cardClubs4
+  bounds: 420, 190, 140, 190
+Cards/cardClubs5
+  bounds: 560, 190, 140, 190
+Cards/cardClubs6
+  bounds: 700, 190, 140, 190
+Cards/cardClubs7
+  bounds: 840, 190, 140, 190
+Cards/cardClubs8
+  bounds: 980, 190, 140, 190
+Cards/cardClubs9
+  bounds: 1120, 190, 140, 190
+Cards/cardClubs10
+  bounds: 1260, 190, 140, 190
+Cards/cardClubsA
+  bounds: 1400, 190, 140, 190
+Cards/cardClubsJ
+  bounds: 1540, 190, 140, 190
+Cards/cardClubsK
+  bounds: 1680, 190, 140, 190
+Cards/cardClubsQ
+  bounds: 1820, 190, 140, 190
+Cards/cardDiamonds2
+  bounds: 0, 380, 140, 190
+Cards/cardDiamonds3
+  bounds: 140, 380, 140, 190
+Cards/cardDiamonds4
+  bounds: 280, 380, 140, 190
+Cards/cardDiamonds5
+  bounds: 420, 380, 140, 190
+Cards/cardDiamonds6
+  bounds: 560, 380, 140, 190
+Cards/cardDiamonds7
+  bounds: 700, 380, 140, 190
+Cards/cardDiamonds8
+  bounds: 840, 380, 140, 190
+Cards/cardDiamonds9
+  bounds: 980, 380, 140, 190
+Cards/cardDiamonds10
+  bounds: 1120, 380, 140, 190
+Cards/cardDiamondsA
+  bounds: 1260, 380, 140, 190
+Cards/cardDiamondsJ
+  bounds: 1400, 380, 140, 190
+Cards/cardDiamondsK
+  bounds: 1540, 380, 140, 190
+Cards/cardDiamondsQ
+  bounds: 1680, 380, 140, 190
+Cards/cardHearts2
+  bounds: 1820, 380, 140, 190
+Cards/cardHearts3
+  bounds: 0, 570, 140, 190
+Cards/cardHearts4
+  bounds: 140, 570, 140, 190
+Cards/cardHearts5
+  bounds: 280, 570, 140, 190
+Cards/cardHearts6
+  bounds: 420, 570, 140, 190
+Cards/cardHearts7
+  bounds: 560, 570, 140, 190
+Cards/cardHearts8
+  bounds: 700, 570, 140, 190
+Cards/cardHearts9
+  bounds: 840, 570, 140, 190
+Cards/cardHearts10
+  bounds: 980, 570, 140, 190
+Cards/cardHeartsA
+  bounds: 1120, 570, 140, 190
+Cards/cardHeartsJ
+  bounds: 1260, 570, 140, 190
+Cards/cardHeartsK
+  bounds: 1400, 570, 140, 190
+Cards/cardHeartsQ
+  bounds: 1540, 570, 140, 190
+Cards/cardJoker
+  bounds: 1680, 570, 140, 190
+Cards/cardSpades2
+  bounds: 1820, 570, 140, 190
+Cards/cardSpades3
+  bounds: 0, 760, 140, 190
+Cards/cardSpades4
+  bounds: 140, 760, 140, 190
+Cards/cardSpades5
+  bounds: 280, 760, 140, 190
+Cards/cardSpades6
+  bounds: 420, 760, 140, 190
+Cards/cardSpades7
+  bounds: 560, 760, 140, 190
+Cards/cardSpades8
+  bounds: 700, 760, 140, 190
+Cards/cardSpades9
+  bounds: 840, 760, 140, 190
+Cards/cardSpades10
+  bounds: 980, 760, 140, 190
+Cards/cardSpadesA
+  bounds: 1120, 760, 140, 190
+Cards/cardSpadesJ
+  bounds: 1260, 760, 140, 190
+Cards/cardSpadesK
+  bounds: 1400, 760, 140, 190
+Cards/cardSpadesQ
+  bounds: 1540, 760, 140, 190
