@@ -67,6 +67,8 @@ event_decl(framebuffer_size_callback, int width, int height);
 typedef struct engine {
     GLFWwindow *window;
 
+
+
     struct sprite *sprites;
     size_t *free_sprites;
 

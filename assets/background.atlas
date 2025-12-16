@@ -1,0 +1,10 @@
+background.png
+size: 1440, 720
+format: RGBA8888
+filter: Linear, Linear
+repeat: none
+pma: false
+card_area
+  bounds: 0, 0, 160, 210
+felt
+  bounds: 160, 0, 1280, 720

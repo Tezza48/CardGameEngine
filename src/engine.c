@@ -363,10 +363,7 @@ void sprite_remove_child(struct engine* engine, const sprite_handle sprite, cons
         }
     }
 
-    LOG(stderr, "Attempt to remove sprite %d from sprite %d which it was not a child of.", child, sprite);
-#ifdef _DEBUG
-    __debugbreak();
-#endif
+    LOG(stdout, "Attempt to remove sprite %d from sprite %d which it was not a child of.", child, sprite);
 }
 
 void sprite_add_child(struct engine* engine, const sprite_handle parent, const sprite_handle child) {
@@ -382,18 +379,19 @@ void sprite_add_child(struct engine* engine, const sprite_handle parent, const s
     c->parent = parent;
 }
 
+/// Delete a sprite and all of its children
 void delete_sprite(struct engine *engine, sprite_handle handle) {
     struct sprite* sprite = &engine->sprites[handle];
     free(sprite->texture_name);
     sprite->texture_name = NULL;
     memset(sprite->pos, 0, sizeof(vec2));
 
-    sprite_remove_child(engine, handle, sprite->parent);
-
     // delete children recursively
     for (size_t i = 0; i < arrlen(sprite->children); i++) {
         delete_sprite(engine, sprite->children[i]);
     }
+
+    sprite_remove_child(engine, handle, sprite->parent);
     arrfree(sprite->children);
     sprite->children = NULL;
 
