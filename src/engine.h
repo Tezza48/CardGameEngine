@@ -12,25 +12,30 @@
 
 #define LOG(stream, message, ...) fprintf(stream, "LOG (%s:%d)" message "\n", __FILE__, __LINE__, ##__VA_ARGS__);
 
-struct sprite {
+typedef int sprite_handle;
+#define invalid_sprite_handle -1
+typedef struct sprite {
     /// Owned malloced
     char *texture_name;
     vec2 pos;
     // TODO WT Children/Parent Hiararchy
-};
-typedef int sprite_handle;
 
-struct texture {
+    sprite_handle parent;
+    /// stb array
+    sprite_handle* children;
+} sprite;
+
+typedef struct texture {
     size_t texture_index;
 
     /// pixel space rect where the sprite resides on the atlas/base texture.
     vec4 rect;
-};
+} texture;
 
-struct base_texture {
+typedef struct base_texture {
     GLuint texture;
     vec2 size;
-};
+} base_texture;
 
 #define MAX_SPRITES_IN_BATCH 10000
 
@@ -59,7 +64,7 @@ event_decl(key_callback, int key, int scancode, int action, int mods);
 event_decl(mouse_button_callback, int button, int action, int mods);
 event_decl(framebuffer_size_callback, int width, int height);
 
-struct engine {
+typedef struct engine {
     GLFWwindow *window;
 
     struct sprite *sprites;
@@ -74,6 +79,8 @@ struct engine {
         char* key;
         struct base_texture value;
     }* base_textures;
+
+    sprite_handle root;
 
     mat4x4 view;
 
@@ -93,7 +100,7 @@ struct engine {
     framebuffer_size_callback *framebuffer_size_callbacks;
 
     struct engine_stats engine_stats;
-};
+} engine;
 
 struct engine *engine_init(struct engine_config engine_config);
 
@@ -106,6 +113,8 @@ typedef struct {
 void load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites);
 
 sprite_handle create_sprite(struct engine *engine, char* texture_name, vec2 pos);
+void sprite_remove_child(struct engine* engine, sprite_handle sprite, sprite_handle child);
+void sprite_add_child(struct engine* engine, sprite_handle parent, sprite_handle child);
 void delete_sprite(struct engine *engine, sprite_handle sprite);
 
 void engine_update(struct engine* engine);

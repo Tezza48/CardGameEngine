@@ -35,10 +35,10 @@ const char* frag_shader_src = ""
         "    out_frag_color = texture(u_tex, v_tex_coord.xy);\n"
         "}";
 
-struct sprite_vertex {
+typedef struct {
     vec3 pos;
     vec2 tex;
-};
+} sprite_vertex;
 
 bool vec2_inside_rect(const vec2 p, const vec4 rect) {
     return p[0] > rect[0] &&
@@ -199,7 +199,7 @@ struct engine *engine_init(struct engine_config engine_config) {
 
     // Dynamic VBuffer for sprite batch
     glCreateBuffers(1, &engine->sprite_batch_mesh);
-    glNamedBufferStorage(engine->sprite_batch_mesh, sizeof(struct sprite_vertex) * MAX_SPRITES_IN_BATCH * 6, NULL,
+    glNamedBufferStorage(engine->sprite_batch_mesh, sizeof(sprite_vertex) * MAX_SPRITES_IN_BATCH * 6, NULL,
                          GL_DYNAMIC_STORAGE_BIT);
 
     // VAO for sprite batch VBuffer
@@ -208,13 +208,13 @@ struct engine *engine_init(struct engine_config engine_config) {
     glEnableVertexArrayAttrib(engine->sprite_vao, 0);
     glEnableVertexArrayAttrib(engine->sprite_vao, 1);
 
-    glVertexArrayAttribFormat(engine->sprite_vao, 0, 3, GL_FLOAT, GL_FALSE, offsetof(struct sprite_vertex, pos));
-    glVertexArrayAttribFormat(engine->sprite_vao, 1, 2, GL_FLOAT, GL_FALSE, offsetof(struct sprite_vertex, tex));
+    glVertexArrayAttribFormat(engine->sprite_vao, 0, 3, GL_FLOAT, GL_FALSE, offsetof(sprite_vertex, pos));
+    glVertexArrayAttribFormat(engine->sprite_vao, 1, 2, GL_FLOAT, GL_FALSE, offsetof(sprite_vertex, tex));
 
     glVertexArrayAttribBinding(engine->sprite_vao, 0, 0);
     glVertexArrayAttribBinding(engine->sprite_vao, 1, 0);
 
-    glVertexArrayVertexBuffer(engine->sprite_vao, 0, engine->sprite_batch_mesh, 0, sizeof(struct sprite_vertex));
+    glVertexArrayVertexBuffer(engine->sprite_vao, 0, engine->sprite_batch_mesh, 0, sizeof(sprite_vertex));
 
     glfwSetWindowUserPointer(engine->window, engine);
 
@@ -236,10 +236,13 @@ struct engine *engine_init(struct engine_config engine_config) {
     event_init(engine->key_callbacks);
     event_init(engine->mouse_button_callbacks);
 
+    engine->root = create_sprite(engine, "", (vec2){0});
+
     return engine;
 }
 
 void engine_free(struct engine *engine) {
+    delete_sprite(engine, engine->root);
     arrfree(engine->sprites);
     arrfree(engine->free_sprites);
 
@@ -301,7 +304,7 @@ void load_texture(struct engine *engine, const char *texture_path, const sprites
         y = (int)base_texture.size[1];
     }
 
-    // If there's no sprites requested and we've not already loaded a sprite with that name, add a texture covering the whole base texture.
+    // If there's no sprites requested, and we've not already loaded a sprite with that name, add a texture covering the whole base texture.
     if (NULL == sprites && -1 == shgeti(engine->textures, texture_path)) {
         shput(engine->textures, texture_path, ((struct texture){
             .texture_index = base_texture_index,
@@ -339,7 +342,44 @@ sprite_handle create_sprite(struct engine *engine, char *texture_name, vec2 pos)
     struct sprite* sprite = &engine->sprites[handle];
     sprite->texture_name = _strdup(texture_name);
     memcpy(sprite->pos, pos, sizeof(vec2));
+
+    sprite->parent = invalid_sprite_handle;
     return handle;
+}
+
+void sprite_remove_child(struct engine* engine, const sprite_handle sprite, const sprite_handle child) {
+    struct sprite* s = &engine->sprites[sprite];
+    struct sprite* c = &engine->sprites[child];
+
+    if (c->parent != sprite) {
+        LOG(stderr, "Cannot remove child from sprite which it is not a child of");
+    }
+
+    for (size_t i = 0; i < arrlen(s->children); i++) {
+        if (child == s->children[i]) {
+            arrdel(s->children, i);
+            c->parent = invalid_sprite_handle;
+            return;
+        }
+    }
+
+    LOG(stderr, "Attempt to remove sprite %d from sprite %d which it was not a child of.", child, sprite);
+#ifdef _DEBUG
+    __debugbreak();
+#endif
+}
+
+void sprite_add_child(struct engine* engine, const sprite_handle parent, const sprite_handle child) {
+    struct sprite* p = &engine->sprites[parent];
+    struct sprite* c = &engine->sprites[child];
+
+    if (invalid_sprite_handle != c->parent) {
+        // Remove from its previous parent
+        sprite_remove_child(engine, c->parent, child);
+    }
+
+    arrput(p->children, child);
+    c->parent = parent;
 }
 
 void delete_sprite(struct engine *engine, sprite_handle handle) {
@@ -347,6 +387,17 @@ void delete_sprite(struct engine *engine, sprite_handle handle) {
     free(sprite->texture_name);
     sprite->texture_name = NULL;
     memset(sprite->pos, 0, sizeof(vec2));
+
+    sprite_remove_child(engine, handle, sprite->parent);
+
+    // delete children recursively
+    for (size_t i = 0; i < arrlen(sprite->children); i++) {
+        delete_sprite(engine, sprite->children[i]);
+    }
+    arrfree(sprite->children);
+    sprite->children = NULL;
+
+
     arrpush(engine->free_sprites, handle);
 }
 
@@ -355,12 +406,30 @@ void engine_update(struct engine* engine) {
     memcpy(engine->last_cursor_pos, engine->cursor_pos, sizeof(vec2));
 }
 
-void _flush(struct engine* engine, struct sprite_vertex* vertices, GLuint texture) {
+
+typedef struct {
+    GLuint texture;
+    sprite_vertex* vertices;
+} batch;
+
+batch batch_create(GLuint texture) {
+    batch b = {
+        .texture= texture,
+        .vertices = NULL,
+    };
+    return b;
+}
+
+void batch_push(batch* batch, sprite_vertex vertex) {
+    arrput(batch->vertices, vertex);
+}
+
+void batch_flush(struct engine* engine, batch *batch) {
     glNamedBufferSubData(
         engine->sprite_batch_mesh,
         0,
-        arrlen(vertices) * sizeof(struct sprite_vertex),
-        (void*)vertices);
+        arrlen(batch->vertices) * sizeof(sprite_vertex),
+        (void*)batch->vertices);
 
     glUseProgram(engine->sprite_batch_program);
 
@@ -368,63 +437,60 @@ void _flush(struct engine* engine, struct sprite_vertex* vertices, GLuint textur
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glActiveTexture(GL_TEXTURE0 + 0);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    glBindTexture(GL_TEXTURE_2D, batch->texture);
 
     glBindVertexArray(engine->sprite_vao);
 
-    glDrawArrays(GL_TRIANGLES, 0, arrlen(vertices));
+    glDrawArrays(GL_TRIANGLES, 0, arrlen(batch->vertices));
+    engine->engine_stats.draw_calls++;
 
     glUseProgram(0);
     glBindVertexArray(0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    engine->engine_stats.draw_calls++;
+    arrfree(batch->vertices);
+    batch->vertices = NULL;
 }
 
-void engine_render(struct engine* engine) {
-    engine->engine_stats.draw_calls = 0;
+void render_child(engine* engine, batch* batch, sprite_handle handle, vec2 offset) {
+    sprite spr = engine->sprites[handle];
 
-    if (NULL == engine->sprites) {return;}
+    vec2 self_offset;
+    vec2_add(self_offset, spr.pos, offset);
 
-    size_t numSprites = arrlen(engine->sprites);
-    if (0 == numSprites) return;
+    // Sprites with no texture are just containers, they don't get rendered but children do.
+    if (strcmp(spr.texture_name, "") != 0) {
+        texture tex = shget(engine->textures, spr.texture_name);
+        base_texture base_tex = engine->base_textures[tex.texture_index].value;
 
-    struct sprite_vertex* vertices = NULL;
+        // Texture has changed, we need to flush and start a new batch IF there is anything in the batch.
+        if (batch->texture != base_tex.texture) {
+            if (arrlen(batch->vertices) > 0) batch_flush(engine, batch);
+            *batch = batch_create(base_tex.texture);
+        }
 
-    GLuint current_texture = 0;
+        const float tex_x = tex.rect[0],
+                        tex_y = tex.rect[1],
+                        tex_w = tex.rect[2],
+                        tex_h = tex.rect[3],
+                        base_width = base_tex.size[0],
+                        base_height = base_tex.size[1];
 
-#define FLUSH_AND_CLEAR() {_flush(engine, vertices, current_texture); batch_size = 0;arrfree(vertices);}
-
-    size_t batch_size = 0;
-    for (size_t i = 0; i < numSprites; i++) {
-        const struct sprite spr = engine->sprites[i];
-        struct texture_storage* tex_storage = shgetp(engine->textures, spr.texture_name);
-        struct texture tex = shget(engine->textures, spr.texture_name);
-        char* base_texture_name = engine->base_textures[tex.texture_index].key;
-        struct base_texture base_tex = engine->base_textures[tex.texture_index].value;
-
-        if ((base_tex.texture != current_texture) && batch_size > 0) {FLUSH_AND_CLEAR()}
-        // If the texture has changed we need to flush the batch. Encourage the use of Atlases, the renderer currently only support one texture at a time.
-
-        current_texture = base_tex.texture;
-
-        float tex_x = tex.rect[0], tex_y = tex.rect[1], tex_w = tex.rect[2], tex_h = tex.rect[3], base_width = base_tex.size[0], base_height = base_tex.size[1];
-
-        struct sprite_vertex corners[4] = {
-            (struct sprite_vertex){
-                .pos = {spr.pos[0], spr.pos[1], 0.0f},
+        sprite_vertex corners[4] = {
+            (sprite_vertex){
+                .pos = {self_offset[0], self_offset[1], 0.0f},
                 .tex = {tex_x / base_width, tex_y / base_height}
             },
-            (struct sprite_vertex){
-                .pos = {spr.pos[0], spr.pos[1] + tex_h, 0.0f},
+            (sprite_vertex){
+                .pos = {self_offset[0], self_offset[1] + tex_h, 0.0f},
                 .tex = {tex_x / base_width, (tex_y + tex_h) / base_height}
             },
-            (struct sprite_vertex){
-                .pos = {spr.pos[0] + tex_w, spr.pos[1] + tex_h, 0.0f},
+            (sprite_vertex){
+                .pos = {self_offset[0] + tex_w, self_offset[1] + tex_h, 0.0f},
                 .tex = {(tex_x + tex_w) / base_width, (tex_y + tex_h) / base_height}
             },
-            (struct sprite_vertex){
-                .pos = {spr.pos[0] + tex_w, spr.pos[1], 0.0f},
+            (sprite_vertex){
+                .pos = {self_offset[0] + tex_w, self_offset[1], 0.0f},
                 .tex = {(tex_x + tex_w) / base_width, tex_y / base_height}
             },
         };
@@ -439,25 +505,40 @@ void engine_render(struct engine* engine) {
             corners[j].pos[2] = r[2];
         }
 
-        arrput(vertices, corners[0]);
-        arrput(vertices, corners[1]);
-        arrput(vertices, corners[2]);
+        batch_push(batch, corners[0]);
+        batch_push(batch, corners[1]);
+        batch_push(batch, corners[2]);
 
-        arrput(vertices, corners[0]);
-        arrput(vertices, corners[2]);
-        arrput(vertices, corners[3]);
+        batch_push(batch, corners[0]);
+        batch_push(batch, corners[2]);
+        batch_push(batch, corners[3]);
 
-        batch_size++;
-
-        // TODO WT: Also needs to detect how many textures have been used as to not exceed the max of the shader.
-        if (MAX_SPRITES_IN_BATCH == batch_size) {
-            FLUSH_AND_CLEAR()
+        if (MAX_SPRITES_IN_BATCH == (arrlen(batch->vertices) / 6)) {
+            batch_flush(engine, batch);
         }
-
-#undef FLUSH_AND_CLEAR
     }
 
-    if (batch_size > 0) {
-        _flush(engine, vertices, current_texture);
+    // Then render the children recursively.
+    for (size_t i = 0; i < arrlen(spr.children); i++) {
+        assert(spr.children);
+        render_child(engine, batch, spr.children[i], self_offset);
+    }
+}
+
+void engine_render(struct engine* engine) {
+    // TODO WT: Start from the parent and recurse children
+    engine->engine_stats.draw_calls = 0;
+
+    if (NULL == engine->sprites) {return;}
+
+    size_t numSprites = arrlen(engine->sprites);
+    if (0 == numSprites) return;
+
+    batch batch = batch_create(0);
+
+    render_child(engine, &batch, engine->root, (vec2){0});
+
+    if (arrlen(batch.vertices) > 0) {
+        batch_flush(engine, &batch);
     }
 }

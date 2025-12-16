@@ -12,18 +12,21 @@
 #define MAX_ELEMENT_BUFFER 128 * 1024
 
 void start(struct engine * engine) {
-
     texturepacker_data *tps = load_spritesheet("assets/spritesheet.atlas");
     load_texture(engine, tps->img_path, tps->spritesheet);
     load_texture(engine, tps->img_path, NULL);
     load_texture(engine, "assets/kenney_boardgame/Cards/cardBack_blue1.png", NULL);
-    create_sprite(engine, tps->img_path, (vec2){0});
+    sprite_handle whole_sheet = create_sprite(engine, tps->img_path, (vec2){0});
     free_spritesheet(tps);
 
 
-    create_sprite(engine, "Cards/cardClubs2", (vec2){30.0f, 30.0f});
+    sprite_handle card_clubs_2 = create_sprite(engine, "Cards/cardClubs2", (vec2){30.0f, 30.0f});
 
-    create_sprite(engine, "assets/kenney_boardgame/Cards/cardBack_blue1.png", (vec2){50.0f, 0});
+    sprite_handle card_back_blue_1 = create_sprite(engine, "assets/kenney_boardgame/Cards/cardBack_blue1.png", (vec2){50.0f, 0});
+
+    sprite_add_child(engine, engine->root, whole_sheet);
+    sprite_add_child(engine, engine->root, card_back_blue_1);
+    sprite_add_child(engine, engine->root, card_clubs_2);
 }
 
 void nk_scroll_callback_fwd(void* ctx, double xoff, double yoff) {
