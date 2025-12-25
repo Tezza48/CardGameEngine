@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
         editor_ui_render(engine, ctx);
 
         glClear(GL_COLOR_BUFFER_BIT);
-        glClearColor(0.5f, 0.5f, 0.5f, 1.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
         update(engine, &app);
         engine_render(engine);

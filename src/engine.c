@@ -35,6 +35,18 @@ const char* frag_shader_src = ""
         "    out_frag_color = texture(u_tex, v_tex_coord.xy);\n"
         "}";
 
+void sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user) {
+    if (op_before) op_before(engine, handle, user);
+
+    sprite* sprite = &engine->sprites[handle];
+    for (size_t i = 0; i < arrlen(sprite->children); i ++) {
+        assert(sprite->children);
+        sprite_traverse(engine, sprite->children[i], op_before, op_after, user);
+    }
+
+    if (op_after) op_after(engine, handle, user);
+}
+
 typedef struct {
     vec3 pos;
     vec2 tex;
@@ -93,6 +105,14 @@ void on_mouse_button(GLFWwindow* window, int button, int action, int mods) {
 
     // Iterate through all sprites to see what overlaps the mouse position.
     for (size_t i = 0; i < arrlen(engine->sprites); i++) {
+        // make sure sprite isn't deleted. (won't need to do this once interaction happens using tree)
+        bool already_deleted = false;
+        for (size_t j = 0; j < arrlen(engine->free_sprites); j++) {
+            if (i == engine->free_sprites[j]) {already_deleted = true; break;}
+        }
+        if (already_deleted) {continue;}
+
+
         struct sprite* sprite = &engine->sprites[i];
         const float* bounds = shget(engine->textures, engine->sprites[i].texture_name).rect;
         if (vec2_inside_rect(engine->cursor_pos, (vec4){
@@ -352,7 +372,7 @@ void sprite_remove_child(struct engine* engine, const sprite_handle sprite, cons
     struct sprite* c = &engine->sprites[child];
 
     if (c->parent != sprite) {
-        LOG(stderr, "Cannot remove child from sprite which it is not a child of");
+         LOG(stderr, "Cannot remove child from sprite which it is not a child of");
     }
 
     for (size_t i = 0; i < arrlen(s->children); i++) {
@@ -362,6 +382,10 @@ void sprite_remove_child(struct engine* engine, const sprite_handle sprite, cons
             return;
         }
     }
+
+    // if (arrlen(s->children) == 0) {
+    //     arrfree(s->children);
+    // }
 
     LOG(stdout, "Attempt to remove sprite %d from sprite %d which it was not a child of.", child, sprite);
 }
@@ -379,24 +403,21 @@ void sprite_add_child(struct engine* engine, const sprite_handle parent, const s
     c->parent = parent;
 }
 
-/// Delete a sprite and all of its children
-void delete_sprite(struct engine *engine, sprite_handle handle) {
-    struct sprite* sprite = &engine->sprites[handle];
+void delete_sprite_op(engine* engine, sprite_handle handle, void* user) {
+    sprite* sprite = &engine->sprites[handle];
     free(sprite->texture_name);
     sprite->texture_name = NULL;
     memset(sprite->pos, 0, sizeof(vec2));
 
-    // delete children recursively
-    for (size_t i = 0; i < arrlen(sprite->children); i++) {
-        delete_sprite(engine, sprite->children[i]);
+    if (sprite->parent != invalid_sprite_handle) {
+        sprite_remove_child(engine, sprite->parent, handle);
     }
 
-    sprite_remove_child(engine, handle, sprite->parent);
-    arrfree(sprite->children);
-    sprite->children = NULL;
-
-
     arrpush(engine->free_sprites, handle);
+}
+
+void delete_sprite(engine* engine, sprite_handle handle) {
+    sprite_traverse(engine, handle, delete_sprite_op, NULL, NULL);
 }
 
 void engine_update(struct engine* engine) {

@@ -67,8 +67,6 @@ event_decl(framebuffer_size_callback, int width, int height);
 typedef struct engine {
     GLFWwindow *window;
 
-
-
     struct sprite *sprites;
     size_t *free_sprites;
 
@@ -118,6 +116,9 @@ sprite_handle create_sprite(struct engine *engine, char* texture_name, vec2 pos)
 void sprite_remove_child(struct engine* engine, sprite_handle sprite, sprite_handle child);
 void sprite_add_child(struct engine* engine, sprite_handle parent, sprite_handle child);
 void delete_sprite(struct engine *engine, sprite_handle sprite);
+
+typedef void (* sprite_fn)(engine* engine, sprite_handle handle, void* user);
+void sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user);
 
 void engine_update(struct engine* engine);
 void engine_render(struct engine *engine);
