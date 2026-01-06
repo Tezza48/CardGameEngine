@@ -13,22 +13,28 @@
 
 #define LOG(stream, message, ...) fprintf(stream, "LOG (%s:%d)" message "\n", __FILE__, __LINE__, ##__VA_ARGS__);
 
-inline bool vec2_inside_rect(const vec2 p, const vec4 rect) {
-    return p[0] > rect[0] &&
-           p[0] < (rect[0] + rect[2]) &&
-           p[1] > rect[1] &&
-           p[1] < (rect[1] + rect[3]);
-}
-
 typedef float aabb[4];
 typedef float rect[4];
+inline bool vec2_inside_aabb(const vec2 p, const aabb a) {
+    return p[0] > a[0] &&
+           p[0] < a[2] &&
+           p[1] > a[1] &&
+           p[1] < a[3];
+}
+inline bool vec2_inside_rect(const vec2 p, const rect a) {
+    return p[0] > a[0] &&
+           p[0] < (a[0] + a[2]) &&
+           p[1] > a[1] &&
+           p[1] < (a[1] + a[3]);
+}
+
 inline void aabb_union(aabb r, aabb a, aabb b) {
     r[0] = fminf(a[0], b[0]);
     r[1] = fminf(a[1], b[1]);
     r[2] = fmaxf(a[2], b[2]);
     r[3] = fmaxf(a[3], b[3]);
 }
-inline void aabb_offset(aabb r, aabb a, vec2 o) {
+inline void aabb_offset(aabb r, const aabb a, const vec2 o) {
     r[0] = a[0] + o[0];
     r[1] = a[1] + o[1];
     r[2] = a[2] + o[0];
@@ -40,6 +46,23 @@ inline void aabb_to_rect(rect r, aabb a) {
     r[1] = a[1];
     r[2] = a[2] - a[0];
     r[3] = a[3] - a[1];
+}
+
+inline void aabb_bottom_left(vec2 r, aabb b) {
+    r[0] = b[0];
+    r[1] = b[1];
+}
+inline void aabb_top_left(vec2 r, aabb b) {
+    r[0] = b[0];
+    r[1] = b[3];
+}
+inline void aabb_top_right(vec2 r, aabb b) {
+    r[0] = b[2];
+    r[1] = b[3];
+}
+inline void aabb_bottom_right(vec2 r, aabb b) {
+    r[0] = b[2];
+    r[1] = b[1];
 }
 // Calculated clockwise corners of an aabb
 inline void aabb_to_corners(vec2 r[4], aabb bounds) {
@@ -187,8 +210,10 @@ void engine_delete_sprite(struct engine *engine, sprite_handle sprite);
 
 void engine_clean_sprite_hierarchy(engine* engine);
 
-typedef void (* sprite_fn)(engine* engine, sprite_handle handle, void* user);
-void engine_sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user);
+// Returns whether propogation should continue down the tree
+typedef bool (* sprite_fn_down)(engine* engine, sprite_handle handle, void* user);
+typedef void (* sprite_fn_up)(engine* engine, sprite_handle handle, void* user);
+void engine_sprite_traverse(engine* engine, sprite_handle handle, sprite_fn_down op_before, sprite_fn_up op_after, void* user);
 
 
 void engine_update(struct engine* engine);

@@ -35,13 +35,19 @@ const char* frag_shader_src = ""
         "    out_frag_color = texture(u_tex, v_tex_coord.xy);\n"
         "}";
 
-void engine_sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user) {
-    if (op_before) op_before(engine, handle, user);
+void engine_sprite_traverse(engine* engine, sprite_handle handle, sprite_fn_down op_before, sprite_fn_up op_after, void* user) {
+    bool propagate = true;
 
-    sprite* sprite = &engine->sprites[handle];
-    for (size_t i = 0; i < arrlen(sprite->children); i ++) {
-        assert(sprite->children);
-        engine_sprite_traverse(engine, sprite->children[i], op_before, op_after, user);
+    if (op_before) {
+        propagate = op_before(engine, handle, user);
+    }
+
+    if (propagate) {
+        sprite* sprite = &engine->sprites[handle];
+        for (size_t i = 0; i < arrlen(sprite->children); i ++) {
+            assert(sprite->children);
+            engine_sprite_traverse(engine, sprite->children[i], op_before, op_after, user);
+        }
     }
 
     if (op_after) op_after(engine, handle, user);
@@ -368,7 +374,7 @@ void engine_add_sprite_child(struct engine* engine, const sprite_handle parent, 
     c->parent = parent;
 }
 
-void delete_sprite_op(engine* engine, sprite_handle handle, void* user) {
+bool delete_sprite_op(engine* engine, sprite_handle handle, void* user) {
     sprite* sprite = &engine->sprites[handle];
     free(sprite->texture_name);
     sprite->texture_name = NULL;
@@ -379,6 +385,8 @@ void delete_sprite_op(engine* engine, sprite_handle handle, void* user) {
     }
 
     arrpush(engine->free_sprites, handle);
+
+    return true;
 }
 
 void engine_delete_sprite(engine* engine, sprite_handle handle) {
@@ -390,37 +398,48 @@ void engine_update(struct engine* engine) {
     memcpy(engine->last_cursor_pos, engine->cursor_pos, sizeof(vec2));
 }
 
-void before_op(engine* engine, sprite_handle handle, void* _user) {
-    sprite* sprite = &engine->sprites[handle];
+bool update_bounds_before(engine* engine, sprite_handle handle, void* _user) {
+    sprite* spr = &engine->sprites[handle];
 
+    memset(spr->global_pos, 0, sizeof(vec2));
+    memset(spr->global_bounds, 0, sizeof(aabb));
 
-    vec2 parent_pos = {0,0};
-    if (sprite->parent != invalid_sprite_handle) {
-        const struct sprite* parent = &engine->sprites[sprite->parent];
-        memcpy(parent_pos, parent->global_pos, sizeof(vec2));
+    if (spr->parent != invalid_sprite_handle) {
+        sprite* parent = &engine->sprites[spr->parent];
+        vec2_add(spr->global_pos, spr->pos, parent->global_pos);
+    } else {
+        memcpy(spr->global_pos, spr->pos, sizeof(vec2));
     }
 
-    vec2_add(sprite->global_pos, sprite->pos, parent_pos);
+    return true;
 }
-void after_op(engine* engine, sprite_handle handle, void* _user) {
-    sprite* sprite = &engine->sprites[handle];
+void update_bounds_after(engine* engine, sprite_handle handle, void* _user) {
+    sprite* spr = &engine->sprites[handle];
 
-    const texture tex = shget(engine->textures, sprite->texture_name);
-
-    sprite->local_bounds[0] = 0;
-    sprite->local_bounds[1] = 0;
-    sprite->local_bounds[2] = tex.rect[2];
-    sprite->local_bounds[3] = tex.rect[3];
-
-    aabb_offset(sprite->global_bounds, sprite->local_bounds, sprite->global_pos);
-
-    for (size_t i = 0; i < arrlen(sprite->children); i++) {
-        struct sprite* child = &engine->sprites[sprite->children[i]];
-        aabb_union(sprite->global_bounds, sprite->global_bounds, child->global_bounds);
+    if (strcmp(spr->texture_name, "") != 0) {
+        const texture tex = shget(engine->textures, spr->texture_name);
+        spr->local_bounds[0] = 0;
+        spr->local_bounds[1] = 0;
+        spr->local_bounds[2] = tex.rect[2];
+        spr->local_bounds[3] = tex.rect[3];
+    } else {
+        memset(spr->local_bounds, 0, sizeof(aabb));
     }
+
+    aabb_offset(spr->global_bounds, spr->local_bounds, spr->global_pos);
+
+    aabb temp;
+    memcpy(temp, spr->global_bounds, sizeof(aabb));
+
+    for (size_t i = 0; i < arrlen(spr->children); i++) {
+        sprite* child = &engine->sprites[spr->children[i]];
+        aabb_union(temp, temp, child->global_bounds);
+    }
+
+    memcpy(spr->global_bounds, temp, sizeof(aabb));
 }
 void engine_clean_sprite_hierarchy(engine* engine) {
-    engine_sprite_traverse(engine, engine->root, before_op, after_op, NULL);
+    engine_sprite_traverse(engine, engine->root, update_bounds_before, update_bounds_after, NULL);
 }
 
 
@@ -436,9 +455,19 @@ batch batch_create(GLuint texture) {
     };
     return b;
 }
+//
+// void batch_push(batch* batch, sprite_vertex vertex) {
+//     arrput(batch->vertices, vertex);
+// }
 
-void batch_push(batch* batch, sprite_vertex vertex) {
-    arrput(batch->vertices, vertex);
+void batch_push_quad(batch* batch, sprite_vertex corners[4]) {
+    arrput(batch->vertices, corners[0]);
+    arrput(batch->vertices, corners[1]);
+    arrput(batch->vertices, corners[2]);
+
+    arrput(batch->vertices, corners[0]);
+    arrput(batch->vertices, corners[2]);
+    arrput(batch->vertices, corners[3]);
 }
 
 void batch_flush(struct engine* engine, batch *batch) {
@@ -469,49 +498,44 @@ void batch_flush(struct engine* engine, batch *batch) {
     batch->vertices = NULL;
 }
 
-void render_child(engine* engine, batch* batch, sprite_handle handle) {
-    sprite spr = engine->sprites[handle];
-    if (!spr.visible) return;
 
-    // Sprites with no texture are just containers, they don't get rendered but children do.
+bool sprite_render_op(engine* engine, sprite_handle handle, void* user) {
+    batch* b = user;
+    const sprite spr = engine->sprites[handle];
+
+    // If invisible dont render children
+    if (!spr.visible) return false;
+    // If no texture, render children as usual
     if (strcmp(spr.texture_name, "") != 0) {
-        texture tex = shget(engine->textures, spr.texture_name);
-        base_texture base_tex = engine->base_textures[tex.texture_index].value;
-
-        // Texture has changed, we need to flush and start a new batch IF there is anything in the batch.
-        if (batch->texture != base_tex.texture) {
-            if (arrlen(batch->vertices) > 0) batch_flush(engine, batch);
-            *batch = batch_create(base_tex.texture);
+        const texture tex = shget(engine->textures, spr.texture_name);
+        const base_texture base_tex = engine->base_textures[tex.texture_index].value;
+        if (b->texture != base_tex.texture) {
+            if (arrlen(b->vertices) > 0) batch_flush(engine, b);
+            *b = batch_create(base_tex.texture);
         }
 
-        const float tex_x = tex.rect[0],
-                        tex_y = tex.rect[1],
-                        tex_w = tex.rect[2],
-                        tex_h = tex.rect[3],
-                        base_width = base_tex.size[0],
-                        base_height = base_tex.size[1];
+        aabb spr_quad_bounds;
+        aabb_offset(spr_quad_bounds, spr.local_bounds, spr.global_pos);
 
-        // TODO WT: Should be able to actually use local bounds  with global position instead of having to calculate w and h
         sprite_vertex corners[4] = {
             (sprite_vertex){
-                .pos = {spr.global_pos[0], spr.global_pos[1], 0.0f},
-                .tex = {tex_x / base_width, tex_y / base_height}
+                .pos = {spr_quad_bounds[0], spr_quad_bounds[1], 0.0f},
+                .tex = {tex.rect[0] / base_tex.size[0], tex.rect[1] / base_tex.size[1]}
             },
             (sprite_vertex){
-                .pos = {spr.global_pos[0], spr.global_pos[1] + tex_h, 0.0f},
-                .tex = {tex_x / base_width, (tex_y + tex_h) / base_height}
+                .pos = {spr_quad_bounds[0], spr_quad_bounds[3], 0.0f},
+                .tex = {tex.rect[0] / base_tex.size[0], (tex.rect[1] + tex.rect[3]) / base_tex.size[1]}
             },
             (sprite_vertex){
-                .pos = {spr.global_pos[0] + tex_w, spr.global_pos[1] + tex_h, 0.0f},
-                .tex = {(tex_x + tex_w) / base_width, (tex_y + tex_h) / base_height}
+                .pos = {spr_quad_bounds[2], spr_quad_bounds[3], 0.0f},
+                .tex = {(tex.rect[0] + tex.rect[2]) / base_tex.size[0], (tex.rect[1] + tex.rect[3]) / base_tex.size[1]}
             },
             (sprite_vertex){
-                .pos = {spr.global_pos[0] + tex_w, spr.global_pos[1], 0.0f},
-                .tex = {(tex_x + tex_w) / base_width, tex_y / base_height}
+                .pos = {spr_quad_bounds[2], spr_quad_bounds[1], 0.0f},
+                .tex = {(tex.rect[0] + tex.rect[2]) / base_tex.size[0], tex.rect[1] / base_tex.size[1]}
             },
         };
 
-        // Move all corners into view space
         for (size_t j = 0; j < 4; j++) {
             const vec4 p = {corners[j].pos[0], corners[j].pos[1], corners[j].pos[2], 1.0f};
             vec4 r = {0};
@@ -521,24 +545,14 @@ void render_child(engine* engine, batch* batch, sprite_handle handle) {
             corners[j].pos[2] = r[2];
         }
 
-        batch_push(batch, corners[0]);
-        batch_push(batch, corners[1]);
-        batch_push(batch, corners[2]);
-
-        batch_push(batch, corners[0]);
-        batch_push(batch, corners[2]);
-        batch_push(batch, corners[3]);
-
-        if (MAX_SPRITES_IN_BATCH == (arrlen(batch->vertices) / 6)) {
-            batch_flush(engine, batch);
-        }
+        batch_push_quad(b, corners);
     }
 
-    // Then render the children recursively.
-    for (size_t i = 0; i < arrlen(spr.children); i++) {
-        assert(spr.children);
-        render_child(engine, batch, spr.children[i]);
+    if (MAX_SPRITES_IN_BATCH == (arrlen(b->vertices) / 6)) {
+        batch_flush(engine, b);
     }
+
+    return true;
 }
 
 void engine_render(struct engine* engine) {
@@ -554,7 +568,7 @@ void engine_render(struct engine* engine) {
 
     batch batch = batch_create(0);
 
-    render_child(engine, &batch, engine->root);
+    engine_sprite_traverse(engine, engine->root, sprite_render_op, NULL, &batch);
 
     if (arrlen(batch.vertices) > 0) {
         batch_flush(engine, &batch);

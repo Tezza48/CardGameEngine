@@ -28,6 +28,9 @@ typedef struct card_data {
 typedef struct app {
     engine* engine;
 
+    int life_points;
+
+
     card_data* full_deck;
 
     card_data* current_deck;
@@ -35,6 +38,14 @@ typedef struct app {
     card_data room_data[4];
     sprite_handle room_parent;
     sprite_handle room_cards[4];
+
+    bool has_weapon;
+    card_data weapon;
+    sprite_handle weapon_sprites;
+    int last_body_size;
+
+    card_data* weapon_bodies;
+    sprite_handle* weapon_body_sprites;
 } app;
 
 // Allocates returned value.
@@ -92,12 +103,23 @@ void start_new_deck(engine* engine, app* app) {
         app->full_deck[swap_idx] = app->current_deck[i];
         app->current_deck[i] = temp;
     }
+
+    app->life_points = 20;
 }
 
 void on_mouse_button_for_sprite(void* app_user, int button, int action, int mods) {
     app* app = (struct app*)app_user;
 
     engine_clean_sprite_hierarchy(app->engine);
+
+    for (size_t i = 0; i < 4; i++) {
+        sprite_handle card_handle = app->room_cards[i];
+        struct sprite* spr = &app->engine->sprites[card_handle];
+        if (!spr->visible) continue;
+        if (vec2_inside_aabb(app->engine->cursor_pos, spr->global_bounds)) {
+            spr->visible = false;
+        }
+    }
 
 
 }
@@ -244,14 +266,14 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    struct nk_context *ctx = nk_glfw3_init(engine->window, NK_GLFW3_DEFAULT, MAX_VERTEX_BUFFER, MAX_ELEMENT_BUFFER);
+    struct nk_context *nk = nk_glfw3_init(engine->window, NK_GLFW3_DEFAULT, MAX_VERTEX_BUFFER, MAX_ELEMENT_BUFFER);
 
     {
         struct nk_font_atlas *atlas;
         nk_glfw3_font_stash_begin(&atlas);
         struct nk_font *roboto = nk_font_atlas_add_from_file(atlas, "./assets/Roboto-Regular.ttf", 14, NULL);
         nk_glfw3_font_stash_end();
-        nk_style_set_font(ctx, &roboto->handle);
+        nk_style_set_font(nk, &roboto->handle);
     }
 
     event_push(engine->scroll_callbacks, scroll_callback, engine->window, nk_scroll_callback_fwd);
@@ -272,7 +294,15 @@ int main(int argc, char **argv) {
         glfwGetWindowSize(engine->window, &width, &height);
         glViewport(0, 0, width, height);
 
-        editor_ui_render(engine, ctx);
+        editor_ui_render(engine, nk);
+
+        if (nk_begin(nk, "Player Info", nk_rect(1280 - 300, 50, 280, 200), NK_WINDOW_TITLE)) {
+            nk_layout_row_dynamic(nk, 20, 1);
+            char life_points[128];
+            snprintf(life_points, _countof(life_points), "Life Points: %d/20", app.life_points);
+            nk_label(nk, life_points, NK_TEXT_ALIGN_LEFT);
+        }
+        nk_end(nk);
 
         glClear(GL_COLOR_BUFFER_BIT);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
