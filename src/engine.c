@@ -35,13 +35,13 @@ const char* frag_shader_src = ""
         "    out_frag_color = texture(u_tex, v_tex_coord.xy);\n"
         "}";
 
-void sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user) {
+void engine_sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user) {
     if (op_before) op_before(engine, handle, user);
 
     sprite* sprite = &engine->sprites[handle];
     for (size_t i = 0; i < arrlen(sprite->children); i ++) {
         assert(sprite->children);
-        sprite_traverse(engine, sprite->children[i], op_before, op_after, user);
+        engine_sprite_traverse(engine, sprite->children[i], op_before, op_after, user);
     }
 
     if (op_after) op_after(engine, handle, user);
@@ -51,14 +51,6 @@ typedef struct {
     vec3 pos;
     vec2 tex;
 } sprite_vertex;
-
-bool vec2_inside_rect(const vec2 p, const vec4 rect) {
-    return p[0] > rect[0] &&
-           p[0] < (rect[0] + rect[2]) &&
-           p[1] > rect[1] &&
-           p[1] < (rect[1] + rect[3]);
-
-}
 
 void glfw_error_fun(int error_code, const char* description) {
     LOG(stderr, "GLFW ERROR %d: %s", error_code, description);
@@ -100,30 +92,6 @@ void on_key(GLFWwindow* window, int key, int scancode, int action, int mods) {
 void on_mouse_button(GLFWwindow* window, int button, int action, int mods) {
     struct engine* engine = glfwGetWindowUserPointer(window);
     event_notify(engine->mouse_button_callbacks, button, action, mods);
-
-    if (action != 1) return;
-
-    // Iterate through all sprites to see what overlaps the mouse position.
-    for (size_t i = 0; i < arrlen(engine->sprites); i++) {
-        // make sure sprite isn't deleted. (won't need to do this once interaction happens using tree)
-        bool already_deleted = false;
-        for (size_t j = 0; j < arrlen(engine->free_sprites); j++) {
-            if (i == engine->free_sprites[j]) {already_deleted = true; break;}
-        }
-        if (already_deleted) {continue;}
-
-
-        struct sprite* sprite = &engine->sprites[i];
-        const float* bounds = shget(engine->textures, engine->sprites[i].texture_name).rect;
-        if (vec2_inside_rect(engine->cursor_pos, (vec4){
-            sprite->pos[0],
-            sprite->pos[1],
-            sprite->pos[0] + bounds[2],
-            sprite->pos[1] + bounds[3],
-        })) {
-            printf("You Clicked on sprite %lld, %s\n", i, sprite->texture_name);
-        }
-    }
 }
 
 
@@ -256,19 +224,19 @@ struct engine *engine_init(struct engine_config engine_config) {
     event_init(engine->key_callbacks);
     event_init(engine->mouse_button_callbacks);
 
-    engine->root = create_sprite(engine, "", (vec2){0});
+    engine->root = engine_create_sprite(engine, "", (vec2){0});
 
     return engine;
 }
 
 void engine_free(struct engine *engine) {
-    delete_sprite(engine, engine->root);
+    engine_delete_sprite(engine, engine->root);
     arrfree(engine->sprites);
     arrfree(engine->free_sprites);
 
     for (int i = 0; i < shlen(engine->base_textures); i++) {
         assert(engine->base_textures);
-        glDeleteTextures(1, &engine->base_textures[i].value);
+        glDeleteTextures(1, &engine->base_textures[i].value.texture);
     }
     shfree(engine->base_textures);
 
@@ -288,7 +256,7 @@ void engine_free(struct engine *engine) {
 }
 
 // TODO WT: Support Texture Atlases
-void load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites) {
+void engine_load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites) {
     size_t base_texture_index = 0;
     int x, y, bpp;
     if (-1 == shgeti(engine->base_textures, texture_path)) {
@@ -350,7 +318,7 @@ void load_texture(struct engine *engine, const char *texture_path, const sprites
     }
 }
 
-sprite_handle create_sprite(struct engine *engine, char *texture_name, vec2 pos) {
+sprite_handle engine_create_sprite(struct engine *engine, char *texture_name, vec2 pos) {
     sprite_handle handle;
     if (arrlen(engine->free_sprites) > 0) {
         handle = arrpop(engine->free_sprites);
@@ -360,6 +328,7 @@ sprite_handle create_sprite(struct engine *engine, char *texture_name, vec2 pos)
     }
 
     struct sprite* sprite = &engine->sprites[handle];
+    sprite->visible = true;
     sprite->texture_name = _strdup(texture_name);
     memcpy(sprite->pos, pos, sizeof(vec2));
 
@@ -367,7 +336,7 @@ sprite_handle create_sprite(struct engine *engine, char *texture_name, vec2 pos)
     return handle;
 }
 
-void sprite_remove_child(struct engine* engine, const sprite_handle sprite, const sprite_handle child) {
+void engine_remove_sprite_child(struct engine* engine, const sprite_handle sprite, const sprite_handle child) {
     struct sprite* s = &engine->sprites[sprite];
     struct sprite* c = &engine->sprites[child];
 
@@ -383,20 +352,16 @@ void sprite_remove_child(struct engine* engine, const sprite_handle sprite, cons
         }
     }
 
-    // if (arrlen(s->children) == 0) {
-    //     arrfree(s->children);
-    // }
-
     LOG(stdout, "Attempt to remove sprite %d from sprite %d which it was not a child of.", child, sprite);
 }
 
-void sprite_add_child(struct engine* engine, const sprite_handle parent, const sprite_handle child) {
+void engine_add_sprite_child(struct engine* engine, const sprite_handle parent, const sprite_handle child) {
     struct sprite* p = &engine->sprites[parent];
     struct sprite* c = &engine->sprites[child];
 
     if (invalid_sprite_handle != c->parent) {
         // Remove from its previous parent
-        sprite_remove_child(engine, c->parent, child);
+        engine_remove_sprite_child(engine, c->parent, child);
     }
 
     arrput(p->children, child);
@@ -410,19 +375,52 @@ void delete_sprite_op(engine* engine, sprite_handle handle, void* user) {
     memset(sprite->pos, 0, sizeof(vec2));
 
     if (sprite->parent != invalid_sprite_handle) {
-        sprite_remove_child(engine, sprite->parent, handle);
+        engine_remove_sprite_child(engine, sprite->parent, handle);
     }
 
     arrpush(engine->free_sprites, handle);
 }
 
-void delete_sprite(engine* engine, sprite_handle handle) {
-    sprite_traverse(engine, handle, delete_sprite_op, NULL, NULL);
+void engine_delete_sprite(engine* engine, sprite_handle handle) {
+    engine_sprite_traverse(engine, handle, delete_sprite_op, NULL, NULL);
 }
 
 void engine_update(struct engine* engine) {
     vec2_sub(engine->cursor_delta, engine->last_cursor_pos, engine->last_cursor_pos);
     memcpy(engine->last_cursor_pos, engine->cursor_pos, sizeof(vec2));
+}
+
+void before_op(engine* engine, sprite_handle handle, void* _user) {
+    sprite* sprite = &engine->sprites[handle];
+
+
+    vec2 parent_pos = {0,0};
+    if (sprite->parent != invalid_sprite_handle) {
+        const struct sprite* parent = &engine->sprites[sprite->parent];
+        memcpy(parent_pos, parent->global_pos, sizeof(vec2));
+    }
+
+    vec2_add(sprite->global_pos, sprite->pos, parent_pos);
+}
+void after_op(engine* engine, sprite_handle handle, void* _user) {
+    sprite* sprite = &engine->sprites[handle];
+
+    const texture tex = shget(engine->textures, sprite->texture_name);
+
+    sprite->local_bounds[0] = 0;
+    sprite->local_bounds[1] = 0;
+    sprite->local_bounds[2] = tex.rect[2];
+    sprite->local_bounds[3] = tex.rect[3];
+
+    aabb_offset(sprite->global_bounds, sprite->local_bounds, sprite->global_pos);
+
+    for (size_t i = 0; i < arrlen(sprite->children); i++) {
+        struct sprite* child = &engine->sprites[sprite->children[i]];
+        aabb_union(sprite->global_bounds, sprite->global_bounds, child->global_bounds);
+    }
+}
+void engine_clean_sprite_hierarchy(engine* engine) {
+    engine_sprite_traverse(engine, engine->root, before_op, after_op, NULL);
 }
 
 
@@ -471,11 +469,9 @@ void batch_flush(struct engine* engine, batch *batch) {
     batch->vertices = NULL;
 }
 
-void render_child(engine* engine, batch* batch, sprite_handle handle, vec2 offset) {
+void render_child(engine* engine, batch* batch, sprite_handle handle) {
     sprite spr = engine->sprites[handle];
-
-    vec2 self_offset;
-    vec2_add(self_offset, spr.pos, offset);
+    if (!spr.visible) return;
 
     // Sprites with no texture are just containers, they don't get rendered but children do.
     if (strcmp(spr.texture_name, "") != 0) {
@@ -495,21 +491,22 @@ void render_child(engine* engine, batch* batch, sprite_handle handle, vec2 offse
                         base_width = base_tex.size[0],
                         base_height = base_tex.size[1];
 
+        // TODO WT: Should be able to actually use local bounds  with global position instead of having to calculate w and h
         sprite_vertex corners[4] = {
             (sprite_vertex){
-                .pos = {self_offset[0], self_offset[1], 0.0f},
+                .pos = {spr.global_pos[0], spr.global_pos[1], 0.0f},
                 .tex = {tex_x / base_width, tex_y / base_height}
             },
             (sprite_vertex){
-                .pos = {self_offset[0], self_offset[1] + tex_h, 0.0f},
+                .pos = {spr.global_pos[0], spr.global_pos[1] + tex_h, 0.0f},
                 .tex = {tex_x / base_width, (tex_y + tex_h) / base_height}
             },
             (sprite_vertex){
-                .pos = {self_offset[0] + tex_w, self_offset[1] + tex_h, 0.0f},
+                .pos = {spr.global_pos[0] + tex_w, spr.global_pos[1] + tex_h, 0.0f},
                 .tex = {(tex_x + tex_w) / base_width, (tex_y + tex_h) / base_height}
             },
             (sprite_vertex){
-                .pos = {self_offset[0] + tex_w, self_offset[1], 0.0f},
+                .pos = {spr.global_pos[0] + tex_w, spr.global_pos[1], 0.0f},
                 .tex = {(tex_x + tex_w) / base_width, tex_y / base_height}
             },
         };
@@ -540,7 +537,7 @@ void render_child(engine* engine, batch* batch, sprite_handle handle, vec2 offse
     // Then render the children recursively.
     for (size_t i = 0; i < arrlen(spr.children); i++) {
         assert(spr.children);
-        render_child(engine, batch, spr.children[i], self_offset);
+        render_child(engine, batch, spr.children[i]);
     }
 }
 
@@ -553,9 +550,11 @@ void engine_render(struct engine* engine) {
     size_t numSprites = arrlen(engine->sprites);
     if (0 == numSprites) return;
 
+    engine_clean_sprite_hierarchy(engine);
+
     batch batch = batch_create(0);
 
-    render_child(engine, &batch, engine->root, (vec2){0});
+    render_child(engine, &batch, engine->root);
 
     if (arrlen(batch.vertices) > 0) {
         batch_flush(engine, &batch);

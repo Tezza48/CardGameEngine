@@ -9,21 +9,87 @@
 #include <gl/glew.h>
 #include <GLFW/glfw3.h>
 #include <linmath.h>
+#include <stdbool.h>
 
 #define LOG(stream, message, ...) fprintf(stream, "LOG (%s:%d)" message "\n", __FILE__, __LINE__, ##__VA_ARGS__);
 
+inline bool vec2_inside_rect(const vec2 p, const vec4 rect) {
+    return p[0] > rect[0] &&
+           p[0] < (rect[0] + rect[2]) &&
+           p[1] > rect[1] &&
+           p[1] < (rect[1] + rect[3]);
+}
+
+typedef float aabb[4];
+typedef float rect[4];
+inline void aabb_union(aabb r, aabb a, aabb b) {
+    r[0] = fminf(a[0], b[0]);
+    r[1] = fminf(a[1], b[1]);
+    r[2] = fmaxf(a[2], b[2]);
+    r[3] = fmaxf(a[3], b[3]);
+}
+inline void aabb_offset(aabb r, aabb a, vec2 o) {
+    r[0] = a[0] + o[0];
+    r[1] = a[1] + o[1];
+    r[2] = a[2] + o[0];
+    r[3] = a[3] + o[1];
+}
+
+inline void aabb_to_rect(rect r, aabb a) {
+    r[0] = a[0];
+    r[1] = a[1];
+    r[2] = a[2] - a[0];
+    r[3] = a[3] - a[1];
+}
+// Calculated clockwise corners of an aabb
+inline void aabb_to_corners(vec2 r[4], aabb bounds) {
+    r[0][0] = bounds[0];
+    r[0][1] = bounds[1];
+
+    r[1][0] = bounds[0];
+    r[1][2] = bounds[3];
+
+    r[2][0] = bounds[2];
+    r[2][1] = bounds[3];
+
+    r[3][0] = bounds[2];
+    r[3][1] = bounds[1];
+}
+
 typedef int sprite_handle;
-#define invalid_sprite_handle -1
+#define invalid_sprite_handle (-1)
 typedef struct sprite {
     /// Owned malloced
     char *texture_name;
     vec2 pos;
-    // TODO WT Children/Parent Hiararchy
+
+    bool visible;
 
     sprite_handle parent;
     /// stb array
     sprite_handle* children;
+
+    // cached data dependent on parent/children
+    vec2 global_pos;
+
+    // X, Y, W, H
+    aabb local_bounds;
+    aabb global_bounds;
 } sprite;
+
+inline void sprite_set_pos(sprite* sprite, vec2 pos) {
+    memcpy(sprite->pos, pos, sizeof(sprite->pos));
+    // sprite->dirty = true;
+}
+inline void sprite_set_x(sprite* sprite, float x) {
+    sprite->pos[0] = x;
+    // sprite->dirty = true;
+}
+inline void sprite_set_y(sprite* sprite, float y) {
+    sprite->pos[1] = y;
+    // sprite->dirty = true;
+}
+
 
 typedef struct texture {
     size_t texture_index;
@@ -63,6 +129,7 @@ event_decl(char_callback, unsigned int c);
 event_decl(key_callback, int key, int scancode, int action, int mods);
 event_decl(mouse_button_callback, int button, int action, int mods);
 event_decl(framebuffer_size_callback, int width, int height);
+
 
 typedef struct engine {
     GLFWwindow *window;
@@ -110,15 +177,19 @@ typedef struct {
     char* key;
     vec4 value;
 } spritesheet_entry;
-void load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites);
+void engine_load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites);
 
-sprite_handle create_sprite(struct engine *engine, char* texture_name, vec2 pos);
-void sprite_remove_child(struct engine* engine, sprite_handle sprite, sprite_handle child);
-void sprite_add_child(struct engine* engine, sprite_handle parent, sprite_handle child);
-void delete_sprite(struct engine *engine, sprite_handle sprite);
+/// SPRITES
+sprite_handle engine_create_sprite(struct engine *engine, char* texture_name, vec2 pos);
+void engine_remove_sprite_child(struct engine* engine, sprite_handle sprite, sprite_handle child);
+void engine_add_sprite_child(struct engine* engine, sprite_handle parent, sprite_handle child);
+void engine_delete_sprite(struct engine *engine, sprite_handle sprite);
+
+void engine_clean_sprite_hierarchy(engine* engine);
 
 typedef void (* sprite_fn)(engine* engine, sprite_handle handle, void* user);
-void sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user);
+void engine_sprite_traverse(engine* engine, sprite_handle handle, sprite_fn op_before, sprite_fn op_after, void* user);
+
 
 void engine_update(struct engine* engine);
 void engine_render(struct engine *engine);

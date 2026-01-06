@@ -26,7 +26,9 @@ typedef struct card_data {
 } card_data;
 
 typedef struct app {
-     card_data* full_deck;
+    engine* engine;
+
+    card_data* full_deck;
 
     card_data* current_deck;
 
@@ -92,8 +94,18 @@ void start_new_deck(engine* engine, app* app) {
     }
 }
 
+void on_mouse_button_for_sprite(void* app_user, int button, int action, int mods) {
+    app* app = (struct app*)app_user;
+
+    engine_clean_sprite_hierarchy(app->engine);
+
+
+}
+
 void start(engine *engine, app *app) {
     srand(time(NULL));
+
+    event_push(engine->mouse_button_callbacks, mouse_button_callback, app, on_mouse_button_for_sprite);
 
     // No Red Face Cards or Aces
     arrput(app->full_deck, ((struct card_data){CLUBS, 1}));
@@ -154,23 +166,23 @@ void start(engine *engine, app *app) {
 
 
     texturepacker_data *tps = load_spritesheet("assets/spritesheet.atlas");
-    load_texture(engine, tps->img_path, tps->spritesheet);
+    engine_load_texture(engine, tps->img_path, tps->spritesheet);
     free_spritesheet(tps);
 
     tps = load_spritesheet("assets/background.atlas");
-    load_texture(engine, tps->img_path, tps->spritesheet);
+    engine_load_texture(engine, tps->img_path, tps->spritesheet);
     free_spritesheet(tps);
 
     start_new_deck(engine, app);
 
-    sprite_handle felt = create_sprite(engine, "felt", (vec2){0});
-    sprite_add_child(engine, engine->root, felt);
+    sprite_handle felt = engine_create_sprite(engine, "felt", (vec2){0});
+    engine_add_sprite_child(engine, engine->root, felt);
 
     vec2 card_size = {140, 190};
     vec2 card_background_size = {160, 210};
 
-    app->room_parent = create_sprite(engine, "", (vec2){1280 / 2.0f - (float)card_size[0] * 2.0f, 720 - (float)card_size[1] - 50});
-    sprite_add_child(engine, engine->root, app->room_parent);
+    app->room_parent = engine_create_sprite(engine, "", (vec2){1280 / 2.0f - (float)card_size[0] * 2.0f, 720 - (float)card_size[1] - 50});
+    engine_add_sprite_child(engine, engine->root, app->room_parent);
 
 
     float padding = 20.0f;
@@ -180,22 +192,22 @@ void start(engine *engine, app *app) {
     vec2_scale(bg_diff, bg_diff, 0.5f);
 
     for (size_t i = 0; i < 4; i++) {
-        sprite_handle bg = create_sprite(engine, "card_area", (vec2){
+        sprite_handle bg = engine_create_sprite(engine, "card_area", (vec2){
             (float)i * (card_size[0] + padding) + bg_diff[0],
             bg_diff[1]
         });
-        sprite_add_child(engine, app->room_parent, bg);
+        engine_add_sprite_child(engine, app->room_parent, bg);
     }
 
     for (size_t i = 0; i < 4; i++) {
         app->room_data[i] = (card_data){SPADES, 1};
         char* tex_name = card_data_to_texture(app->room_data[i]);
-        app->room_cards[i] = create_sprite(engine, tex_name, (vec2){
+        app->room_cards[i] = engine_create_sprite(engine, tex_name, (vec2){
             (float)i * (card_size[0] + padding),
             0.0f
         });
         free(tex_name);
-        sprite_add_child(engine, app->room_parent, app->room_cards[i]);
+        engine_add_sprite_child(engine, app->room_parent, app->room_cards[i]);
     }
 }
 
@@ -207,7 +219,7 @@ void cleanup(engine* engine, app* app) {
     arrfree(app->full_deck);
     arrfree(app->current_deck);
     // Freeing room_parent will also free the children
-    delete_sprite(engine, app->room_parent);
+    engine_delete_sprite(engine, app->room_parent);
 }
 
 void nk_scroll_callback_fwd(void *ctx, double xoff, double yoff) {
@@ -248,6 +260,7 @@ int main(int argc, char **argv) {
     event_push(engine->mouse_button_callbacks, mouse_button_callback, engine->window, nk_mouse_button_callback_fwd);
 
     app app = {0};
+    app.engine = engine;
     start(engine, &app);
 
     while (!glfwWindowShouldClose(engine->window)) {
