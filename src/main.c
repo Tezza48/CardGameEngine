@@ -25,6 +25,11 @@ typedef struct card_data {
     int rank;
 } card_data;
 
+typedef enum STATE {
+    WAITING,
+    DRAGGING,
+} STATE;
+
 typedef struct app {
     engine* engine;
 
@@ -36,19 +41,23 @@ typedef struct app {
     card_data* current_deck;
 
     card_data room_data[4];
+    bool free_room_positions[4];
     sprite_handle room_parent;
-    sprite_handle room_cards[4];
+    sprite_handle room_sprites[4];
 
     bool has_weapon;
     card_data weapon;
-    sprite_handle weapon_sprites;
-    int last_body_size;
+    sprite_handle weapon_sprite;
+    int last_slain_monster_size;
 
-    card_data* weapon_bodies;
-    sprite_handle* weapon_body_sprites;
+    card_data* slain_monsters;
+    sprite_handle* slain_monster_sprites;
+
+    STATE state;
+    int currently_dragging_index;
 } app;
 
-// Allocates returned value.
+// Allocates returned string with calloc
 char *card_data_to_texture(struct card_data data) {
     char *suit = NULL;
     switch (data.suit) {
@@ -109,26 +118,62 @@ void start_new_deck(engine* engine, app* app) {
 
 void on_mouse_button_for_sprite(void* app_user, int button, int action, int mods) {
     app* app = (struct app*)app_user;
+    struct engine* engine = app->engine;
 
-    engine_clean_sprite_hierarchy(app->engine);
+    engine_try_clean_sprite_hierarchy(app->engine);
 
-    for (size_t i = 0; i < 4; i++) {
-        sprite_handle card_handle = app->room_cards[i];
-        struct sprite* spr = &app->engine->sprites[card_handle];
-        if (!spr->visible) continue;
-        if (vec2_inside_aabb(app->engine->cursor_pos, spr->global_bounds)) {
-            spr->visible = false;
-        }
+    switch (app->state) {
+        case WAITING:
+            if (action == GLFW_PRESS) {
+                for (size_t i = 0; i < 4; i++) {
+                    sprite_handle card_handle = app->room_sprites[i];
+                    struct sprite* spr = &app->engine->sprites[card_handle];
+                    if (vec2_inside_aabb(app->engine->cursor_pos, spr->global_bounds)) {
+                        app->state = DRAGGING;
+                        app->currently_dragging_index = (int)i;
+                        break;
+                    }
+                }
+            }
+            break;
+        case DRAGGING:
+            if (action == GLFW_RELEASE) {
+                // Stop dragging, if it's over the weapon, try to kill with weapon.
+                // if it's over Life Points area, kill using life points
+                // Reset the position of the sprite to starting pos
+                const sprite* weapon = &engine->sprites[app->weapon_sprite];
+                if (vec2_inside_aabb(app->engine->cursor_pos, weapon->global_bounds)) {
+                    // Consume the card using the weapon
+                    app->state = WAITING;
+                }
+
+                // If it's over the life points sprite
+
+                // Otherwise, reset the position
+                engine_set_sprite_pos(engine, app->room_sprites[app->currently_dragging_index], (vec2){0});
+            }
+            break;
     }
-
-
 }
 
-void start(engine *engine, app *app) {
-    srand(time(NULL));
+void refill_room(app* app) {
+    for (size_t i = 0; i < 4; i++) {
+        if (app->free_room_positions[i]) {
+            app->room_data[i] = arrpop(app->current_deck);
 
-    event_push(engine->mouse_button_callbacks, mouse_button_callback, app, on_mouse_button_for_sprite);
+            char* sprite_name = card_data_to_texture(app->room_data[i]);
+            engine_sprite_set_texture(app->engine, app->room_sprites[i], sprite_name);
+            free(sprite_name);
 
+            app->free_room_positions[i] = false;
+
+            // we want to stop once we've dealt the last card in the deck.
+            if (arrlen(app->current_deck) == 0) break;
+        }
+    }
+}
+
+void create_full_deck(app* app) {
     // No Red Face Cards or Aces
     arrput(app->full_deck, ((struct card_data){CLUBS, 1}));
     arrput(app->full_deck, ((struct card_data){CLUBS, 2}));
@@ -185,7 +230,14 @@ void start(engine *engine, app *app) {
     // arrput(app->full_deck, ((struct card_data){DIAMONDS, 11}));
     // arrput(app->full_deck, ((struct card_data){DIAMONDS, 12}));
     // arrput(app->full_deck, ((struct card_data){DIAMONDS, 13}));
+}
 
+void start(engine *engine, app *app) {
+    memset(app->free_room_positions, true, 4);
+
+    event_push(engine->mouse_button_callbacks, mouse_button_callback, app, on_mouse_button_for_sprite);
+
+    create_full_deck(app);
 
     texturepacker_data *tps = load_spritesheet("assets/spritesheet.atlas");
     engine_load_texture(engine, tps->img_path, tps->spritesheet);
@@ -213,6 +265,7 @@ void start(engine *engine, app *app) {
     vec2_sub(bg_diff, card_size, card_background_size);
     vec2_scale(bg_diff, bg_diff, 0.5f);
 
+    // Create the card area backgrounds
     for (size_t i = 0; i < 4; i++) {
         sprite_handle bg = engine_create_sprite(engine, "card_area", (vec2){
             (float)i * (card_size[0] + padding) + bg_diff[0],
@@ -221,20 +274,50 @@ void start(engine *engine, app *app) {
         engine_add_sprite_child(engine, app->room_parent, bg);
     }
 
+    // create the actual room card sprites
     for (size_t i = 0; i < 4; i++) {
-        app->room_data[i] = (card_data){SPADES, 1};
-        char* tex_name = card_data_to_texture(app->room_data[i]);
-        app->room_cards[i] = engine_create_sprite(engine, tex_name, (vec2){
+        // create container spr in correct pos, create card sprite as child so we can drag it and reset pos
+        sprite_handle parent = engine_create_sprite(engine, "", (vec2){
             (float)i * (card_size[0] + padding),
             0.0f
         });
-        free(tex_name);
-        engine_add_sprite_child(engine, app->room_parent, app->room_cards[i]);
+        engine_add_sprite_child(engine, app->room_parent, parent);
+
+        app->room_sprites[i] = engine_create_sprite(engine, "", (vec2){0});
+        engine_add_sprite_child(engine, parent, app->room_sprites[i]);
     }
+
+    refill_room(app);
 }
 
 void update(engine* engine, app* app) {
+    switch (app->state) {
+        case WAITING:
 
+            break;
+        case DRAGGING:
+            engine->sprites_dirty = true;
+            engine_try_clean_sprite_hierarchy(engine);
+
+            sprite_handle dragged_sprite = app->room_sprites[app->currently_dragging_index];
+            sprite_handle parent = engine_get_parent(engine, dragged_sprite);
+
+            // Move the card sprite to be under the cursor, in global space
+            const float* cursor_pos = engine->cursor_pos;
+            vec2 parent_global;
+            engine_get_global_pos(engine, parent, parent_global);
+
+            vec2 spr_pos;
+            vec2_sub(spr_pos, cursor_pos, parent_global);
+
+            aabb bounds;
+            engine_get_sprite_bounds(engine, dragged_sprite, bounds);
+            vec2 bound_offset = {bounds[2] / 2.0f, bounds[3] / 2.0f};
+            vec2_sub(spr_pos, spr_pos, bound_offset);
+            engine_set_sprite_pos(engine, dragged_sprite, spr_pos);
+
+            break;
+    }
 }
 
 void cleanup(engine* engine, app* app) {
@@ -261,6 +344,8 @@ void nk_mouse_button_callback_fwd(void *ctx, int button, int action, int mods) {
 }
 
 int main(int argc, char **argv) {
+    srand(time(NULL));
+
     struct engine *engine = engine_init((struct engine_config){});
     if (!engine) {
         return -1;

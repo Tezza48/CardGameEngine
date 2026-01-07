@@ -160,6 +160,8 @@ typedef struct engine {
     struct sprite *sprites;
     size_t *free_sprites;
 
+    bool sprites_dirty;
+
     struct texture_storage{
         char *key;
         struct texture value;
@@ -203,12 +205,30 @@ typedef struct {
 void engine_load_texture(struct engine *engine, const char *texture_path, const spritesheet_entry* sprites);
 
 /// SPRITES
-sprite_handle engine_create_sprite(struct engine *engine, char* texture_name, vec2 pos);
-void engine_remove_sprite_child(struct engine* engine, sprite_handle sprite, sprite_handle child);
-void engine_add_sprite_child(struct engine* engine, sprite_handle parent, sprite_handle child);
-void engine_delete_sprite(struct engine *engine, sprite_handle sprite);
+sprite_handle engine_create_sprite(engine *engine, char* texture_name, vec2 pos);
+void engine_remove_sprite_child(engine* engine, sprite_handle sprite, sprite_handle child);
+void engine_add_sprite_child(engine* engine, sprite_handle parent, sprite_handle child);
+void engine_delete_sprite(engine *engine, sprite_handle sprite);
+void engine_sprite_set_texture(engine* engine, sprite_handle handle, char* texture_name);
+void engine_try_clean_sprite_hierarchy(engine* engine);
 
-void engine_clean_sprite_hierarchy(engine* engine);
+inline void engine_get_sprite_pos(engine* engine, sprite_handle handle, _Out_ vec2 r) {
+    memcpy(r, engine->sprites[handle].pos, sizeof(vec2));
+}
+inline void engine_get_sprite_bounds(engine* engine, sprite_handle handle, _Out_ aabb r) {
+    memcpy(r, engine->sprites[handle].local_bounds, sizeof(aabb));
+}
+inline void engine_get_global_pos(engine* engine, sprite_handle handle, _Out_ vec2 r) {
+    engine_try_clean_sprite_hierarchy(engine);
+    memcpy(r, engine->sprites[handle].global_pos, sizeof(vec2));
+}
+inline void engine_set_sprite_pos(engine* engine, sprite_handle handle, vec2 pos) {
+    engine->sprites_dirty = true;
+    memcpy(engine->sprites[handle].pos, pos, sizeof(vec2));
+}
+inline sprite_handle engine_get_parent(engine* engine, sprite_handle sprite) {
+    return engine->sprites[sprite].parent;
+}
 
 // Returns whether propogation should continue down the tree
 typedef bool (* sprite_fn_down)(engine* engine, sprite_handle handle, void* user);

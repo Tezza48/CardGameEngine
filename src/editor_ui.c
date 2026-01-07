@@ -23,7 +23,9 @@ void _sprite_list_op_recursive(engine* engine, sprite_handle handle, struct nk_c
         snprintf(tex_label_format, 256, "texture: %s", sprite->texture_name);
         nk_label(nk, tex_label_format, NK_TEXT_ALIGN_LEFT);
 
-        sprite->visible = nk_check_label(nk, "visible", sprite->visible);
+        nk_bool visible = (nk_bool)sprite->visible;
+        nk_checkbox_label(nk, "visible", &visible);
+        sprite->visible = (bool)visible;
 
         nk_layout_row_begin(nk, NK_DYNAMIC, 0, 2);
         nk_layout_row_push(nk, 0.5f);

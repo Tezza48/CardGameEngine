@@ -346,6 +346,8 @@ void engine_remove_sprite_child(struct engine* engine, const sprite_handle sprit
     struct sprite* s = &engine->sprites[sprite];
     struct sprite* c = &engine->sprites[child];
 
+    engine->sprites_dirty = true;
+
     if (c->parent != sprite) {
          LOG(stderr, "Cannot remove child from sprite which it is not a child of");
     }
@@ -372,6 +374,8 @@ void engine_add_sprite_child(struct engine* engine, const sprite_handle parent, 
 
     arrput(p->children, child);
     c->parent = parent;
+
+    engine->sprites_dirty = true;
 }
 
 bool delete_sprite_op(engine* engine, sprite_handle handle, void* user) {
@@ -391,6 +395,13 @@ bool delete_sprite_op(engine* engine, sprite_handle handle, void* user) {
 
 void engine_delete_sprite(engine* engine, sprite_handle handle) {
     engine_sprite_traverse(engine, handle, delete_sprite_op, NULL, NULL);
+    engine->sprites_dirty = true;
+}
+
+void engine_sprite_set_texture(engine* engine, sprite_handle handle, char* texture_name) {
+    sprite* spr = &engine->sprites[handle];
+    spr->texture_name = _strdup(texture_name);
+    engine->sprites_dirty = true;
 }
 
 void engine_update(struct engine* engine) {
@@ -438,8 +449,10 @@ void update_bounds_after(engine* engine, sprite_handle handle, void* _user) {
 
     memcpy(spr->global_bounds, temp, sizeof(aabb));
 }
-void engine_clean_sprite_hierarchy(engine* engine) {
+void engine_try_clean_sprite_hierarchy(engine* engine) {
+    if (!engine->sprites_dirty) return;
     engine_sprite_traverse(engine, engine->root, update_bounds_before, update_bounds_after, NULL);
+    engine->sprites_dirty = false;
 }
 
 
@@ -555,7 +568,7 @@ bool sprite_render_op(engine* engine, sprite_handle handle, void* user) {
     return true;
 }
 
-void engine_render(struct engine* engine) {
+void engine_render(engine* engine) {
     // TODO WT: Start from the parent and recurse children
     engine->engine_stats.draw_calls = 0;
 
@@ -564,7 +577,7 @@ void engine_render(struct engine* engine) {
     size_t numSprites = arrlen(engine->sprites);
     if (0 == numSprites) return;
 
-    engine_clean_sprite_hierarchy(engine);
+    engine_try_clean_sprite_hierarchy(engine);
 
     batch batch = batch_create(0);
 
