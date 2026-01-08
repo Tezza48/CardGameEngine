@@ -30,8 +30,12 @@ void _sprite_list_op_recursive(engine* engine, sprite_handle handle, struct nk_c
         nk_layout_row_begin(nk, NK_DYNAMIC, 0, 2);
         nk_layout_row_push(nk, 0.5f);
         nk_layout_row_push(nk, 0.5f);
-        nk_property_float(nk, "#pos x", -FLT_MAX, &sprite->pos[0], FLT_MAX, 1, 0.5);
-        nk_property_float(nk, "#pos y", -FLT_MAX, &sprite->pos[1], FLT_MAX, 1, 0.5);
+
+        vec2 spr_pos;
+        engine_get_sprite_pos(engine, handle, spr_pos);
+        nk_property_float(nk, "#pos x", -FLT_MAX, &spr_pos[0], FLT_MAX, 1, 0.5f);
+        nk_property_float(nk, "#pos y", -FLT_MAX, &spr_pos[1], FLT_MAX, 1, 0.5f);
+        engine_set_sprite_pos(engine, handle, spr_pos);
         nk_layout_row_end(nk);
 
         nk_label(nk, "Global Bounds", NK_TEXT_ALIGN_LEFT);

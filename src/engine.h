@@ -5,7 +5,7 @@
 
 #pragma once
 #include <stdlib.h>
-
+#include <float.h>
 #include <gl/glew.h>
 #include <GLFW/glfw3.h>
 #include <linmath.h>
@@ -222,8 +222,14 @@ inline void engine_get_global_pos(engine* engine, sprite_handle handle, _Out_ ve
     engine_try_clean_sprite_hierarchy(engine);
     memcpy(r, engine->sprites[handle].global_pos, sizeof(vec2));
 }
-inline void engine_set_sprite_pos(engine* engine, sprite_handle handle, vec2 pos) {
-    engine->sprites_dirty = true;
+inline void engine_set_sprite_pos(engine* engine, sprite_handle handle, const vec2 pos) {
+    sprite* spr = &engine->sprites[handle];
+
+    if (pos[0] != spr->pos[0] || pos[1] != spr->pos[1])
+    {
+        engine->sprites_dirty = true;
+    }
+
     memcpy(engine->sprites[handle].pos, pos, sizeof(vec2));
 }
 inline sprite_handle engine_get_parent(engine* engine, sprite_handle sprite) {
